@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
         SELECT m.*, c.name as category_name, c.slug as category_slug
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
-        WHERE (m.is_available::text = 'true' OR m.is_available::text = '1' OR m.is_available::text = 't')
+        WHERE (m.is_available = TRUE OR m.is_available = 1 OR m.is_available::text = 'true' OR m.is_available::text = '1' OR m.is_available::text = 't' OR m.is_available IS NULL)
     `;
     const params = [];
     if (category && category !== 'all') {
