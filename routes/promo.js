@@ -11,11 +11,10 @@ const router = express.Router();
 router.get('/promotions', async (req, res) => {
     try {
         const promotions = await db.all(`
-            SELECT p.*, mi1.name as buy_item_name, mi2.name as get_item_name, c.name as category_name
+            SELECT p.*, mi1.name as buy_item_name, mi2.name as get_item_name
             FROM promotions p
             LEFT JOIN menu_items mi1 ON p.buy_item_id = mi1.id
             LEFT JOIN menu_items mi2 ON p.get_item_id = mi2.id
-            LEFT JOIN categories c ON p.category_id = c.id
             ORDER BY p.created_at DESC
         `);
         res.json({ promotions });
@@ -33,9 +32,8 @@ router.get('/public/active', async (req, res) => {
         // PERINTAH: Program diskon yang sama seperti pada aplikasi mobile POS muncul di web
         // Voucher diskon muncul input masukkan kode voucher (Frontend handling)
         const discounts = await db.all(`
-            SELECT d.*, c.name as category_name 
+            SELECT d.* 
             FROM discounts d
-            LEFT JOIN categories c ON d.category_id = c.id
             WHERE d.is_active = 1
             AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
             AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
@@ -59,9 +57,8 @@ router.get('/pos/active', async (req, res) => {
             ORDER BY created_at DESC
         `);
         const discounts = await db.all(`
-            SELECT d.*, c.name as category_name 
+            SELECT d.* 
             FROM discounts d
-            LEFT JOIN categories c ON d.category_id = c.id
             WHERE d.is_active = 1
             AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
             AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
@@ -86,15 +83,14 @@ router.post('/promotions', async (req, res) => {
         end_date = (end_date && end_date !== "") ? end_date : null;
 
         const result = await db.run(`
-            INSERT INTO promotions (name, description, type, buy_item_id, get_item_id, buy_qty, get_qty, min_purchase, start_date, end_date, is_active, category_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO promotions (name, description, type, buy_item_id, get_item_id, buy_qty, get_qty, min_purchase, start_date, end_date, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
         `, [
             name, description || null, type, buy_item_id, get_item_id,
             Number(buy_qty) || 0, Number(get_qty) || 0, Number(min_purchase) || 0,
             start_date, end_date,
-            isActiveVal,
-            (req.body.category_id && req.body.category_id !== "") ? Number(req.body.category_id) : null
+            isActiveVal
         ]);
         const id = (result.rows && result.rows[0]) ? result.rows[0].id : result.lastId;
         res.status(201).json({ id, message: 'Promo berhasil dibuat' });
@@ -119,14 +115,13 @@ router.put('/promotions/:id', async (req, res) => {
             UPDATE promotions 
             SET name = $1, description = $2, type = $3, buy_item_id = $4, get_item_id = $5, 
                 buy_qty = $6, get_qty = $7, min_purchase = $8, start_date = $9, end_date = $10, is_active = $11,
-                category_id = $12, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $13
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $12
         `, [
             name, description || null, type, buy_item_id, get_item_id,
             Number(buy_qty) || 0, Number(get_qty) || 0, Number(min_purchase) || 0,
             start_date, end_date,
             isActiveVal,
-            (req.body.category_id && req.body.category_id !== "") ? Number(req.body.category_id) : null,
             Number(req.params.id)
         ]);
         res.json({ message: 'Promo diperbarui' });
@@ -152,9 +147,8 @@ router.delete('/promotions/:id', async (req, res) => {
 router.get('/discounts', async (req, res) => {
     try {
         const discounts = await db.all(`
-            SELECT d.*, c.name as category_name
+            SELECT d.*
             FROM discounts d
-            LEFT JOIN categories c ON d.category_id = c.id
             ORDER BY d.created_at DESC
         `);
         res.json({ discounts });
@@ -175,13 +169,12 @@ router.post('/discounts', async (req, res) => {
         max_discount = (max_discount && max_discount !== "") ? Number(max_discount) : null;
 
         const result = await db.run(`
-            INSERT INTO discounts (name, code, type, value, min_purchase, max_discount, start_date, end_date, is_active, category_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO discounts (name, code, type, value, min_purchase, max_discount, start_date, end_date, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
         `, [
             name, code, type, Number(value), Number(min_purchase) || 0,
-            max_discount, start_date, end_date, isActiveVal,
-            (req.body.category_id && req.body.category_id !== "") ? Number(req.body.category_id) : null
+            max_discount, start_date, end_date, isActiveVal
         ]);
         const id = (result.rows && result.rows[0]) ? result.rows[0].id : result.lastId;
         res.status(201).json({ id, message: 'Diskon berhasil dibuat' });
@@ -204,13 +197,12 @@ router.put('/discounts/:id', async (req, res) => {
         await db.run(`
             UPDATE discounts 
             SET name = $1, code = $2, type = $3, value = $4, min_purchase = $5, max_discount = $6, 
-                start_date = $7, end_date = $8, is_active = $9, category_id = $10,
+                start_date = $7, end_date = $8, is_active = $9,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $11
+            WHERE id = $10
         `, [
             name, code, type, Number(value), Number(min_purchase) || 0,
             max_discount, start_date, end_date, isActiveVal,
-            (req.body.category_id && req.body.category_id !== "") ? Number(req.body.category_id) : null,
             Number(req.params.id)
         ]);
         res.json({ message: 'Diskon diperbarui' });
