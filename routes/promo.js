@@ -32,13 +32,13 @@ router.get('/public/active', async (req, res) => {
         // PERINTAH: Program diskon yang sama seperti pada aplikasi mobile POS muncul di web
         // Voucher diskon muncul input masukkan kode voucher (Frontend handling)
 
-        // FIX: Use CASE WHEN for better NULL handling and db compatibility
+        // FIX: PostgreSQL compatibility - CAST to text first, use IN operator
         const discounts = await db.all(`
             SELECT d.* 
             FROM discounts d
-            WHERE (d.is_active = 1 OR d.is_active::text = 'true' OR d.is_active::text = '1')
-            AND (d.start_date IS NULL OR DATE(d.start_date) <= DATE('now'))
-            AND (d.end_date IS NULL OR DATE(d.end_date) >= DATE('now'))
+            WHERE d.is_active::text IN ('true', '1', 't')
+            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
+            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
             ORDER BY d.created_at DESC
         `);
 
@@ -55,17 +55,17 @@ router.get('/pos/active', async (req, res) => {
     try {
         const promotions = await db.all(`
             SELECT * FROM promotions 
-            WHERE (is_active = 1 OR is_active::text = 'true' OR is_active::text = '1')
-            AND (start_date IS NULL OR DATE(start_date) <= DATE('now'))
-            AND (end_date IS NULL OR DATE(end_date) >= DATE('now'))
+            WHERE is_active::text IN ('true', '1', 't')
+            AND (start_date IS NULL OR start_date <= CURRENT_DATE)
+            AND (end_date IS NULL OR end_date >= CURRENT_DATE)
             ORDER BY created_at DESC
         `);
         const discounts = await db.all(`
             SELECT d.* 
             FROM discounts d
-            WHERE (d.is_active = 1 OR d.is_active::text = 'true' OR d.is_active::text = '1')
-            AND (d.start_date IS NULL OR DATE(d.start_date) <= DATE('now'))
-            AND (d.end_date IS NULL OR DATE(d.end_date) >= DATE('now'))
+            WHERE d.is_active::text IN ('true', '1', 't')
+            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
+            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
             ORDER BY d.created_at DESC
         `);
         console.log('[POS] Active promotions:', promotions.length, 'discounts:', discounts.length);

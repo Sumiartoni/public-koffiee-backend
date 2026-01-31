@@ -86,7 +86,7 @@ router.get('/admin/all', async (req, res) => {
 // 3. CATEGORIES
 router.get('/categories/all', async (req, res) => {
     try {
-        const categories = await db.all(`SELECT * FROM categories WHERE (is_active = TRUE OR is_active = 1 OR is_active::text = 'true' OR is_active::text = '1' OR is_active::text = 't' OR is_active IS NULL) ORDER BY display_order ASC`);
+        const categories = await db.all(`SELECT * FROM categories WHERE (is_active::text IN ('true', '1', 't') OR is_active IS NULL) ORDER BY display_order ASC`);
         res.json({ categories });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
