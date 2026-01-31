@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Environment files (PENTING: jangan push ke GitHub!)
+.env
+.env.local
+.env.production
+
+# Database files (SQLite local)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Uploads (akan dibuat otomatis)
+uploads/*
+!uploads/.gitkeep
+
+# Downloads
+downloads/*
+!downloads/.gitkeep
+
+# Temporary files
+tmp/
+temp/

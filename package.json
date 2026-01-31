@@ -1,0 +1,29 @@
+{
+    "name": "coffee-pos-backend",
+    "version": "1.0.0",
+    "description": "Premium Backend API with WebSockets for Coffee POS System",
+    "main": "server.js",
+    "type": "module",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "nodemon server.js"
+    },
+    "dependencies": {
+        "axios": "^1.13.4",
+        "bcryptjs": "^2.4.3",
+        "better-sqlite3": "^9.6.0",
+        "cors": "^2.8.6",
+        "dotenv": "^16.6.1",
+        "express": "^4.22.1",
+        "jsonwebtoken": "^9.0.3",
+        "multer": "^1.4.5-lts.1",
+        "pg": "^8.17.2",
+        "qrcode": "^1.5.4",
+        "cloudinary": "^2.5.1",
+        "socket.io": "^4.8.3",
+        "uuid": "^9.0.1"
+    },
+    "devDependencies": {
+        "nodemon": "^3.0.2"
+    }
+}

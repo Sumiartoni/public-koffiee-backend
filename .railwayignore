@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.env.local
+.DS_Store
+uploads/*
+!uploads/qris/
+downloads/
+coffee-pos.db
