@@ -31,17 +31,21 @@ router.get('/public/active', async (req, res) => {
 
         // PERINTAH: Program diskon yang sama seperti pada aplikasi mobile POS muncul di web
         // Voucher diskon muncul input masukkan kode voucher (Frontend handling)
+
+        // FIX: Use CASE WHEN for better NULL handling and db compatibility
         const discounts = await db.all(`
             SELECT d.* 
             FROM discounts d
-            WHERE d.is_active = 1
-            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
-            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
+            WHERE (d.is_active = 1 OR d.is_active::text = 'true' OR d.is_active::text = '1')
+            AND (d.start_date IS NULL OR DATE(d.start_date) <= DATE('now'))
+            AND (d.end_date IS NULL OR DATE(d.end_date) >= DATE('now'))
             ORDER BY d.created_at DESC
         `);
 
+        console.log('[PUBLIC] Active discounts fetched:', discounts.length);
         res.json({ promotions, discounts });
     } catch (err) {
+        console.error('[PUBLIC] Error fetching discounts:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -51,21 +55,23 @@ router.get('/pos/active', async (req, res) => {
     try {
         const promotions = await db.all(`
             SELECT * FROM promotions 
-            WHERE is_active = 1
-            AND (start_date IS NULL OR start_date <= CURRENT_DATE)
-            AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+            WHERE (is_active = 1 OR is_active::text = 'true' OR is_active::text = '1')
+            AND (start_date IS NULL OR DATE(start_date) <= DATE('now'))
+            AND (end_date IS NULL OR DATE(end_date) >= DATE('now'))
             ORDER BY created_at DESC
         `);
         const discounts = await db.all(`
             SELECT d.* 
             FROM discounts d
-            WHERE d.is_active = 1
-            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
-            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
+            WHERE (d.is_active = 1 OR d.is_active::text = 'true' OR d.is_active::text = '1')
+            AND (d.start_date IS NULL OR DATE(d.start_date) <= DATE('now'))
+            AND (d.end_date IS NULL OR DATE(d.end_date) >= DATE('now'))
             ORDER BY d.created_at DESC
         `);
+        console.log('[POS] Active promotions:', promotions.length, 'discounts:', discounts.length);
         res.json({ promotions, discounts });
     } catch (err) {
+        console.error('[POS] Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -151,8 +157,13 @@ router.get('/discounts', async (req, res) => {
             FROM discounts d
             ORDER BY d.created_at DESC
         `);
+        console.log('[BACKOFFICE] All discounts fetched:', discounts.length);
+        if (discounts.length > 0) {
+            console.log('[BACKOFFICE] First discount:', discounts[0]);
+        }
         res.json({ discounts });
     } catch (err) {
+        console.error('[BACKOFFICE] Error fetching discounts:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
