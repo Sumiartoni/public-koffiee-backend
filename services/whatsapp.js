@@ -77,7 +77,7 @@ export const formatNewOrder = (order) => {
     const itemsList = (order.items || []).map(item => {
         const totalHargaItem = item.price * item.quantity;
         let note = item.notes ? `\n   _${item.notes}_` : '';
-        return `• *${item.menu_item_name}* x${item.quantity}\n   Rp ${new Intl.NumberFormat('id-ID').format(totalHargaItem)}${note}`;
+        return `• *${item.menu_item_name || item.name}* x${item.quantity}\n   Rp ${new Intl.NumberFormat('id-ID').format(totalHargaItem)}${note}`;
     }).join('\n');
 
 
@@ -145,7 +145,7 @@ _Public Koffiee_
 // ==========================================
 export const formatWalkInReceipt = (order) => {
     const itemsList = (order.items || []).map(item =>
-        `• ${item.menu_item_name} x${item.quantity} (${formatIDR(item.price * item.quantity)})`
+        `• ${item.menu_item_name || item.name} x${item.quantity} (${formatIDR(item.price * item.quantity)})`
     ).join('\n');
 
     return `
