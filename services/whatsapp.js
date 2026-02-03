@@ -87,46 +87,104 @@ export const formatNewOrder = (order) => {
 
     const paymentStatusIcon = order.payment_status === 'paid' ? 'LUNAS ✅' : 'BELUM LUNAS ⏳';
 
+    // Tentukan Judul & Pesan Berdasarkan Tipe Order
+    let titleHeader = "🔔 PESANAN BARU";
+    let typeIcon = "🍽️";
+    let extraInfo = "";
+
+    const type = (order.order_type || '').toLowerCase();
+
+    if (type.includes('delivery')) {
+        titleHeader = "🛵 PESANAN DELIVERY";
+        typeIcon = "🛵";
+        extraInfo = `📍 *Alamat Antar:*\n${order.customer_address || '-'}\n`;
+    } else if (type.includes('pickup') || type.includes('take')) {
+        titleHeader = "🛍️ PESANAN PICKUP";
+        typeIcon = "🛍️";
+        extraInfo = `⏰ *Harap diambil di meja Pickup*\n`;
+    } else if (type.includes('dine')) {
+        titleHeader = "🍽️ PESANAN DINE-IN";
+        typeIcon = "🍽️";
+        extraInfo = `🪑 *Meja No:* ${order.table_number || '-'}\n`;
+    }
+
     return `
-*👋 Halo Kak ${order.customer_name || 'Pelanggan'}!*
+*${titleHeader}*
 
-Pesanan kamu sudah kami terima dan sedang disiapkan oleh Barista. ☕✨
+Halo Kak *${order.customer_name || 'Pelanggan'}*! 👋
+Pesanan kakak sudah kami terima.
 
-📦 *Detail Pesanan:*
+📦 *Info Pesanan:*
 No. Order: *${order.order_number}*
+Tipe: *${order.order_type.toUpperCase()}* ${typeIcon}
 Status: *${paymentStatusIcon}*
-----------------------------------------
+${extraInfo}----------------------------------------
 ${itemsList}
 ----------------------------------------
 💰 *Total: ${formatIDR(order.total)}*
 
-Mohon ditunggu sebentar ya kak! Kami akan segera mengantar/memanggil pesanan kakak.
+Mohon ditunggu ya, pesanan segera kami proses! ✨
 
 _Public Koffiee_
 `.trim();
 };
 
+// Khusus Struk Kasir Offline (Walk-in) - Dikirim saat kasir input order & bayar
+export const formatWalkInReceipt = (order) => {
+    const items = order.items || [];
+    const itemsList = items.map(item => {
+        const priceStr = formatIDR(item.price * item.quantity);
+        return `• ${item.menu_item_name} x${item.quantity} (${priceStr})`;
+    }).join('\n');
+
+    return `
+*🧾 STRUK PEMBELIAN - PUBLIC KOFFIEE*
+
+Tanggal: ${new Date().toLocaleString('id-ID')}
+No. Order: *${order.order_number}*
+Kasir: ${order.cashier_name || 'Admin'}
+----------------------------------------
+${itemsList}
+----------------------------------------
+💰 *Total: ${formatIDR(order.total)}*
+✅ *Status: LUNAS (CASH/QRIS)*
+
+Terima kasih sudah berbelanja! 
+Simpan struk digital ini sebagai bukti transaksi yang sah. 
+Sampai jumpa lagi! 👋☕
+`.trim();
+};
+
 export const formatPaymentSuccess = (order) => {
     return `
-*✅ PEMBAYARAN BERHASIL*
+*✅ PEMBAYARAN DITERIMA*
 
 Halo Kak *${order.customer_name || 'Pelanggan'}*,
 Pembayaran untuk pesanan *${order.order_number}* sebesar *${formatIDR(order.final_amount || order.total)}* telah berhasil diverifikasi.
 
-Terima kasih sudah menyelesaikan pembayaran. Pesanan kakak segera kami proses! 🚀
+Terima kasih! Pesanan segera diproses. 🚀
 
 _Public Koffiee_
 `.trim();
 };
 
 export const formatOrderReady = (order) => {
+    const type = (order.order_type || '').toLowerCase();
+    let actionMessage = "Silakan ambil pesanan kakak di meja Pickup / Barista ya. 🏃💨";
+    let title = "🔔 PESANAN SIAP!";
+
+    if (type.includes('delivery')) {
+        title = "🛵 PESANAN SEDANG DIANTAR!";
+        actionMessage = "Kurir kami sedang menuju ke lokasi kakak. Mohon siapkan uang pas jika COD. 🏠";
+    }
+
     return `
-*🔔 PESANAN SIAP!*
+*${title}*
 
 Halo Kak *${order.customer_name || 'Pelanggan'}*,
 
-Pesanan *${order.order_number}* sudah selesai disiapkan! 
-Silakan ambil pesanan kakak di meja Pickup / Barista ya. 🏃💨
+Pesanan *${order.order_number}* statusnya sudah *SIAP / DIANTAR*.
+${actionMessage}
 
 Selamat menikmati! ☕
 _Public Koffiee_
