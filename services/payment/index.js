@@ -1,6 +1,6 @@
 
 import QRCode from 'qrcode';
-import db from '../db.js'; // Menggunakan koneksi DB yang sudah ada
+import db from '../../db.js'; // Menggunakan koneksi DB yang sudah ada
 import { convertToDynamicQRIS } from './lib/qris.js';
 import { sendWhatsApp, formatPaymentSuccess } from '../../services/whatsapp.js';
 
