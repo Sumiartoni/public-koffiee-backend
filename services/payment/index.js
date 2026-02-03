@@ -36,12 +36,10 @@ async function generateUniqueCode(nominal) {
     return unique;
 }
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Hapus import fs/path jika tidak dipakai lagi di logic ini
+// import fs from 'fs';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
 
 export async function processQrisPayment(orderId) {
     try {
@@ -56,27 +54,15 @@ export async function processQrisPayment(orderId) {
         // 2. Generate Dynamic QRIS String
         const dynamicQrisString = convertToDynamicQRIS(MY_STATIC_QRIS, finalAmount);
 
-        // 3. Generate QR Image & Save to File
-        // Ensure directory exists
-        const rootDir = path.resolve(__dirname, '../../'); // Go up from services/payment to backend root
-        const qrisDir = path.join(rootDir, 'uploads', 'qris');
-
-        if (!fs.existsSync(qrisDir)) {
-            fs.mkdirSync(qrisDir, { recursive: true });
-        }
-
-        const fileName = `order-${orderId}-${uniqueCode}.png`;
-        const filePath = path.join(qrisDir, fileName);
-
-        await QRCode.toFile(filePath, dynamicQrisString, {
+        // 3. Generate QR Image (Base64 Data URL) - Hemat Storage Server
+        const qrImageBase64 = await QRCode.toDataURL(dynamicQrisString, {
+            width: 400,
+            margin: 2,
             color: {
-                dark: '#000000',  // Black dots
-                light: '#ffffff' // White background
-            },
-            width: 400
+                dark: '#000000',
+                light: '#ffffff'
+            }
         });
-
-        const imagePathUrl = `/qris/${fileName}`; // Matches app.use('/qris', ...) in server.js
 
         // 4. Update Order
         await db.run(`
@@ -87,7 +73,7 @@ export async function processQrisPayment(orderId) {
 
         return {
             qris_string: dynamicQrisString,
-            qris_image: imagePathUrl, // Return URL instead of Base64
+            qris_image: qrImageBase64, // Kirim Base64 langsung ke frontend
             final_amount: finalAmount,
             unique_code: uniqueCode,
             expires_at: expiresAt
