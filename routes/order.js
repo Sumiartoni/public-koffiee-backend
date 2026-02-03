@@ -59,6 +59,10 @@ router.post('/', async (req, res) => {
             }
         }
 
+
+        const tax = 0;
+        const total = subtotal - (Number(discount) || 0);
+
         console.log(`Calculated Total: ${total} for ${validItems.length} valid items`);
 
         // INSERT WITH EXPLICIT TYPES AND RETURNING
