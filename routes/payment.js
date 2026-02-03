@@ -10,32 +10,46 @@ const router = express.Router();
  */
 router.post('/callback', async (req, res) => {
     try {
-        console.log(`[PAYMENT CALLBACK] Data received:`, req.body);
+        console.log(`[PAYMENT CALLBACK] Raw Data:`, req.body);
 
-        const { amount, description } = req.body;
+        let { amount, description, message } = req.body;
+
+        // 1. Smart Parsing: If amount is missing/invalid but 'message' exists (from MacroDroid/Forwarder)
+        if (!amount && message) {
+            console.log(`[PAYMENT PARSING] Extracting amount from message: "${message}"`);
+            // Remove "Rp", dots, commas, and non-digits. Examples: "Rp. 7.404" -> "7404"
+            const extracted = String(message).replace(/[^0-9]/g, '');
+            if (extracted) {
+                amount = Number(extracted);
+                console.log(`[PAYMENT PARSING] Extracted Amount: ${amount}`);
+            }
+        }
 
         if (!amount) {
+            console.warn(`[PAYMENT FAILED] Amount is required but missing.`);
             return res.status(400).json({ error: 'Amount is required' });
         }
 
-        // Clean amount string to number if needed
+        // Clean amount string to number just in case
         const amountClean = Number(String(amount).replace(/[^0-9]/g, ''));
 
-        // Verify Payment (Match amount to Pending Order)
+        // Verify Payment (Match amount to UNPAID Order)
         const result = await verifyPayment(amountClean);
 
         if (result.success) {
-            console.log(`[PAYMENT MATCH] Order ${result.orderNumber} PAID!`);
+            console.log(`[PAYMENT MATCH] Order ${result.orderNumber} PAID -> Status now PENDING (Waiting for POS)`);
 
-            // Socket Broadcast (Optional if not handled in verifyPayment service)
+            // Socket Broadcast -> Trigger POS Notification "New Order"
+            // We emit 'new-order' because for the POS, this is effectively a new VALID order entering the queue
             const io = req.app.get('io');
             if (io) {
-                io.emit('order-updated', { id: result.orderId, status: 'completed', payment_status: 'paid' });
+                io.emit('new-order', result.order); // Send full order object
+                io.emit('order-updated', { id: result.orderId, status: 'pending', payment_status: 'paid' });
             }
 
             return res.json({ status: 'success', message: 'Payment verified', data: result });
         } else {
-            console.log(`[PAYMENT IGNORED] No matching pending order for amount ${amountClean}`);
+            console.log(`[PAYMENT IGNORED] No matching UNPAID order for amount ${amountClean}`);
             return res.status(404).json({ status: 'ignored', message: 'No matching order found' });
         }
 

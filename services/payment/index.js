@@ -88,29 +88,32 @@ export async function processQrisPayment(orderId) {
 // Simulasi Check Pembayaran (Web Hook Receiver)
 // Fungsi ini dipanggil oleh "Sistem Cek Mutasi" (external script) ketika ada dana masuk
 export async function verifyPayment(amountReceived) {
-    // Cari order dengan final_amount ini yang statusnya pending
+    // Cari order dengan final_amount ini yang statusnya unpaid/pending
     const order = await db.get(`
         SELECT * FROM orders 
         WHERE final_amount = $1 
-        AND (status = 'pending' OR payment_status = 'pending' OR payment_status = 'unpaid')
+        AND status IN ('unpaid', 'pending')
     `, [amountReceived]);
 
     if (order) {
-        // MATCH! Mark as paid
+        // MATCH! Mark as PAID but status order PENDING (Waiting for POS confirmation)
         await db.run(`
             UPDATE orders 
-            SET status = 'completed', payment_status = 'paid', completed_at = CURRENT_TIMESTAMP 
+            SET status = 'pending', payment_status = 'paid' 
             WHERE id = $1
         `, [order.id]);
 
-        // Kirim Notifikasi WA Lunas
+        // Fetch updated order for socket payload
+        const updatedOrder = await db.get('SELECT * FROM orders WHERE id = $1', [order.id]);
+
+        // Kirim Notifikasi WA Lunas (Memberitahu customer pembayaran diterima & sedang disiapkan)
         if (order.customer_phone) {
-            const msg = formatPaymentSuccess(order);
-            await sendWhatsApp(order.customer_phone, msg);
+            const msg = formatPaymentSuccess(updatedOrder);
+            await sendWhatsApp(order.customer_phone, msg); // Pastikan formatPaymentSuccess disesuaikan jika perlu
         }
 
-        return { success: true, orderId: order.id, orderNumber: order.order_number };
+        return { success: true, orderId: order.id, orderNumber: order.order_number, order: updatedOrder };
     }
 
-    return { success: false, message: "No matching pending order found" };
+    return { success: false, message: "No matching pending/unpaid order found" };
 }

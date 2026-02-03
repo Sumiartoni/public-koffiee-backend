@@ -31,7 +31,7 @@ router.get('/dashboard', async (req, res) => {
                 COALESCE(SUM(total), 0) as total_revenue,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
-            WHERE status IN ('completed', 'pending') 
+            WHERE status = 'completed' 
             AND created_at::date = $1::date
         `, [todayStr]);
 
@@ -39,7 +39,7 @@ router.get('/dashboard', async (req, res) => {
     const salesYesterday = await db.get(`
             SELECT COALESCE(SUM(total), 0) as total_revenue
             FROM orders 
-            WHERE status IN ('completed', 'pending') 
+            WHERE status = 'completed' 
             AND created_at::date = $1::date
         `, [yesterdayStr]);
 

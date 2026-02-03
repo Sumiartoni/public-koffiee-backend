@@ -103,9 +103,10 @@ router.post('/', async (req, res) => {
         let finalStatus = req.body.status || 'pending';
         let finalPaymentStatus = req.body.payment_status || 'unpaid';
 
-        // Override Web/Online Orders selalu Pending
+        // Override Web/Online Orders selalu Unpaid di awal (Menunggu Pembayaran / Konfirmasi)
+        // User Request: Web Order -> Status 'unpaid' dulu. Setelah bayar -> Status 'pending' (Masuk POS).
         if (order_type === 'online' || order_type === 'booking') {
-            finalStatus = 'pending';
+            finalStatus = 'unpaid';
             finalPaymentStatus = 'unpaid';
         }
 
@@ -155,9 +156,12 @@ router.post('/', async (req, res) => {
         const fullOrder = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
         fullOrder.items = validItems;
 
-        // Broadcast Socket
+        // Broadcast Socket (Hanya jika status bukan 'unpaid')
+        // User Request: Notifikasi masuk ke POS hanya saat status 'pending' (setelah bayar)
         const io = req.app.get('io');
-        if (io) io.emit('new-order', fullOrder);
+        if (io && fullOrder.status !== 'unpaid') {
+            io.emit('new-order', fullOrder);
+        }
 
         // QRIS PROCESSING (NEW)
         let paymentData = null;
