@@ -98,24 +98,32 @@ router.post('/', async (req, res) => {
         const total = subtotal - (Number(discount) || 0);
 
         // LOGIC STATUS:
-        // Default: 'pending' (BELUM MASUK LAPORAN)
-        // Kecuali jika dikirim 'completed' dari POS.
-        let finalStatus = req.body.status || 'pending';
-        let finalPaymentStatus = req.body.payment_status || 'unpaid';
+        // Default: 'unpaid' (Safety default)
+        let finalStatus = 'unpaid';
+        let finalPaymentStatus = 'unpaid';
 
-        // Override Web/Online Orders:
-        // - Jika QRIS: Status 'unpaid' (Tunggu bayar agar POS tidak bunyi dulu)
-        // - Jika Cash: Status 'pending' (Langsung masuk POS agar bisa disiapkan)
+        const typeLower = String(order_type || 'online').toLowerCase();
+        const methodLower = String(payment_method || 'cash').toLowerCase();
+
+        // Daftar tipe yang dianggap Online/Web
         const onlineTypes = ['online', 'booking', 'delivery', 'pickup'];
-        if (onlineTypes.includes(String(order_type || '').toLowerCase())) {
-            if (payment_method === 'qris') {
+
+        if (onlineTypes.includes(typeLower)) {
+            if (methodLower === 'qris') {
                 finalStatus = 'unpaid';
                 finalPaymentStatus = 'unpaid';
             } else {
+                // Tipe Online tapi bayar CASH (COD/Pickup) -> Langsung PENDING agar Kasir tau
                 finalStatus = 'pending';
-                finalPaymentStatus = 'unpaid'; // Tetap unpaid sampai dibayar tunai
+                finalPaymentStatus = 'unpaid';
             }
+        } else {
+            // Jika dikirim dari POS (Walk-in), bisa jadi statusnya 'completed' atau 'pending'
+            finalStatus = req.body.status || 'pending';
+            finalPaymentStatus = req.body.payment_status || 'unpaid';
         }
+
+        console.log(`[ORDER LOGIC] Type: ${typeLower}, Method: ${methodLower} -> Status: ${finalStatus}`);
 
         console.log(`Calculated Total: ${total}`);
 
