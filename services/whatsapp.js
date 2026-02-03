@@ -3,7 +3,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const FONNTE_TOKEN = process.env.FONNTE_TOKEN;
+// Token Fonnte (Hardcoded sesuai request user untuk memastikan jalan)
+const FONNTE_TOKEN = process.env.FONNTE_TOKEN || 'UUqCy6MARPx9jPpaMsAT';
 
 const formatIDR = (num) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);
@@ -18,7 +19,7 @@ export const sendWhatsApp = async (target, message) => {
         formattedTarget = formattedTarget.replace(/[^0-9]/g, '');
 
         if (!FONNTE_TOKEN) {
-            console.warn('UUqCy6MARPx9jPpaMsAT');
+            console.warn('[WA] FONNTE_TOKEN missing');
         }
 
         console.log(`[WA] Sending to ${formattedTarget}...`);
