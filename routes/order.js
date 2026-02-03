@@ -46,45 +46,18 @@ router.post('/', async (req, res) => {
         let totalHpp = 0;
         const validItems = [];
 
-        for (const item of items) {
-            const menuItem = await db.get('SELECT * FROM menu_items WHERE id = $1', [Number(item.menu_item_id)]);
-            if (menuItem) {
-                const price = (item.price !== undefined) ? Number(item.price) : Number(menuItem.price);
-                const qty = Number(item.quantity) || 1;
-                const itemSubtotal = price * qty;
-                const itemHpp = (Number(menuItem.hpp) || 0) * qty;
+        // Check if status is explicitly provided (e.g. from POS)
+        // If not, default to 'pending' for ALL web/online orders to ensure confirmation is needed.
+        let finalStatus = req.body.status || 'pending';
+        let finalPaymentStatus = req.body.payment_status || 'unpaid';
 
-                subtotal += itemSubtotal;
-                totalHpp += itemHpp;
-
-                validItems.push({
-                    menu_item_id: menuItem.id,
-                    name: menuItem.name,
-                    quantity: qty,
-                    price: price,
-                    hpp: Number(menuItem.hpp) || 0,
-                    subtotal: itemSubtotal,
-                    notes: item.notes || '',
-                    extras: item.extras || null
-                });
-
-                // Stock update (Background attempt)
-                try {
-                    const recipes = await db.all('SELECT * FROM recipes WHERE menu_item_id = $1', [menuItem.id]);
-                    for (const recipe of recipes) {
-                        const deductQty = Number(recipe.quantity) * qty;
-                        await db.run('UPDATE ingredients SET stock_qty = stock_qty - $1 WHERE id = $2', [deductQty, recipe.ingredient_id]);
-                    }
-                } catch (stockErr) {
-                    console.error("[STOCK UPDATE ERROR] Ignored to let order pass:", stockErr.message);
-                }
+        // Override for specific logic if needed, but prioritizing client intent allows POS to force 'completed'
+        if (!req.body.status) {
+            if (order_type === 'online' || order_type === 'booking') {
+                finalStatus = 'pending';
+                finalPaymentStatus = 'unpaid';
             }
         }
-
-        const tax = 0;
-        const total = subtotal - (Number(discount) || 0);
-        const finalStatus = (order_type === 'online') ? 'pending' : 'completed';
-        const finalPaymentStatus = (order_type === 'online') ? 'unpaid' : 'paid';
 
         console.log(`Calculated Total: ${total} for ${validItems.length} valid items`);
 
