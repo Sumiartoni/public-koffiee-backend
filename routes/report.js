@@ -25,10 +25,10 @@ router.get('/dashboard', async (req, res) => {
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
 
     // Sales Today
-    const stats = await db.get(`
+    const sales = await db.get(`
             SELECT 
                 COUNT(*) as total_orders, 
-                COALESCE(SUM(total), 0) as total_sales,
+                COALESCE(SUM(total), 0) as total_revenue,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status IN ('completed', 'pending') 
