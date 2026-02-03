@@ -2,7 +2,7 @@
 import QRCode from 'qrcode';
 import db from '../db.js'; // Menggunakan koneksi DB yang sudah ada
 import { convertToDynamicQRIS } from './lib/qris.js';
-import { sendWhatsApp, formatPaymentSuccess } from '../backend/services/whatsapp.js';
+import { sendWhatsApp, formatPaymentSuccess } from '../../services/whatsapp.js';
 
 // STATIC QRIS: String mentah QRIS Statis Anda (tanpa CRC di ujung atau lengkap full string)
 // Untuk demo saya pakai dummy. GANTI DENGAN STRING QRIS STATIS ASLI ANDA.
