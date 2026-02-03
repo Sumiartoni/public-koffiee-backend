@@ -1,7 +1,5 @@
 import express from 'express';
 import db from '../db.js';
-import { sendWhatsApp, formatOrderReceipt, formatDeliveryNotification, formatPickupNotification, formatOrderReady } from '../services/whatsapp.js';
-import { processQrisPayment } from '../services/payment/index.js';
 
 const router = express.Router();
 
@@ -31,10 +29,10 @@ async function generateOrderNumber() {
 }
 
 router.post('/', async (req, res) => {
-    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone, is_pay_later } = req.body;
+    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone } = req.body;
 
     console.log(`\n--- NEW ORDER ATTEMPT ---`);
-    console.log(`Cust: ${customer_name}, Type: ${order_type}, PayLater: ${is_pay_later}, Items: ${items?.length}`);
+    console.log(`Cust: ${customer_name}, Type: ${order_type}, Items: ${items?.length}`);
 
     if (!items || items.length === 0) {
         return res.status(400).json({ error: 'Keranjang kosong' });
@@ -61,7 +59,7 @@ router.post('/', async (req, res) => {
 
                 validItems.push({
                     menu_item_id: menuItem.id,
-                    name: menuItem.name || menuItem.menu_item_name, // Fallback if name missing
+                    name: menuItem.name,
                     quantity: qty,
                     price: price,
                     hpp: Number(menuItem.hpp) || 0,
@@ -85,24 +83,8 @@ router.post('/', async (req, res) => {
 
         const tax = 0;
         const total = subtotal - (Number(discount) || 0);
-
-        // LOGIC PAYMENT STATUS
-        let finalStatus = 'pending';
-        let finalPaymentStatus = 'pending';
-
-        if (order_type === 'online' || order_type === 'delivery' || order_type === 'pickup') {
-            finalStatus = 'pending';
-            finalPaymentStatus = 'unpaid';
-        } else {
-            // Dine-in / Takeaway (POS)
-            if (is_pay_later) {
-                finalStatus = 'pending'; // Tetap pending sampai dibayar
-                finalPaymentStatus = 'unpaid';
-            } else {
-                finalStatus = 'completed';
-                finalPaymentStatus = 'paid';
-            }
-        }
+        const finalStatus = (order_type === 'online') ? 'pending' : 'completed';
+        const finalPaymentStatus = (order_type === 'online') ? 'unpaid' : 'paid';
 
         console.log(`Calculated Total: ${total} for ${validItems.length} valid items`);
 
@@ -121,7 +103,7 @@ router.post('/', async (req, res) => {
             String(customer_name || 'Walk-in Customer'),
             String(customer_phone || ''),
             String(address || ''),
-            String(order_type || 'dine-in'),
+            String(order_type || 'online'),
             String(table_number || '-'),
             String(payment_method || 'cash'),
             finalPaymentStatus,
@@ -167,73 +149,21 @@ router.post('/', async (req, res) => {
 
         console.log(`All items saved for order ${orderNumber}`);
 
-        // RE-FETCH FULL ORDER FOR RESPONSE & WA
-        const fullOrder = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
-        fullOrder.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-
         const io = req.app.get('io');
-        if (io) {
-            console.log(`Broadcasting new-order via Socket.IO`);
-            io.emit('new-order', fullOrder);
-        }
-
-        // --- WHATSAPP NOTIFICATION TRIGGER ---
-        // Default Payment Data
-        let paymentData = null;
-        let qrImageUrl = null; // Changed from qrImage (base64) to URL
-
-        // Jika QRIS, Generate Dynamic QRIS via Payment Service
-        if (payment_method === 'qris') {
-            try {
-                paymentData = await processQrisPayment(orderId);
-                // qrImage = paymentData.qris_image; // Base64 (Legacy/Frontend display)
-
-                // Construct Public URL for WhatsApp (Fonnte prefers URL over Base64)
-                // Gunakan host dinamis atau hardcoded domain production
-                const baseUrl = process.env.API_BASE_URL || 'https://illegal-jacinta-mkrrn-d8f0167d.koyeb.app';
-                qrImageUrl = `${baseUrl}/api/payment/render?data=${encodeURIComponent(paymentData.qris_string)}`;
-
-                console.log(`[PAYMENT] QRIS Generated. UniqueCode: ${paymentData.unique_code}, Final: ${paymentData.final_amount}`);
-            } catch (err) {
-                console.error("[PAYMENT ERROR] Gagal generate QRIS:", err);
+        const fullOrder = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
+        if (fullOrder) {
+            fullOrder.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
+            if (io) {
+                console.log(`Broadcasting new-order via Socket.IO`);
+                io.emit('new-order', fullOrder);
             }
         }
-
-        // Teruskan logika WA
-        // ... (Update variabel qrImage -> qrImageUrl dibawah)
-
-        // Teruskan logika WA
-
-        if (customer_phone) {
-            const isOnline = (order_type === 'online' || order_type === 'delivery' || order_type === 'pickup');
-
-            if (isOnline) {
-                // Notifikasi Order Masuk (Delivery / Pickup)
-                const isDelivery = (order_type === 'delivery') || (address && address.length > 5 && !String(address).toUpperCase().includes('PICKUP'));
-
-                if (isDelivery) {
-                    const msg = formatDeliveryNotification(fullOrder, fullOrder.items);
-                    sendWhatsApp(customer_phone, msg, qrImageUrl);
-                } else {
-                    const msg = formatPickupNotification(fullOrder, fullOrder.items);
-                    sendWhatsApp(customer_phone, msg, qrImageUrl);
-                }
-            } else {
-                // POS / Dine-in / Pay Later
-                const msg = formatOrderReceipt(fullOrder, fullOrder.items);
-                // Jika metode pembayaran QRIS, kirim juga gambarnya
-                sendWhatsApp(customer_phone, msg, qrImageUrl);
-            }
-        }
-        // -------------------------------------
 
         res.status(201).json({
             message: 'Order successful',
             order_number: orderNumber,
             id: orderId,
-            order: fullOrder,
-            payment: paymentData, // Data lengkap (string, image, expiry)
-            qris: paymentData?.qris_image // Backward compatibility for frontend (Base64)
+            order: fullOrder
         });
 
     } catch (err) {
@@ -255,69 +185,17 @@ router.get('/', async (req, res) => {
 router.patch('/:id/status', async (req, res) => {
     const { status } = req.body;
     try {
-        const orderId = Number(req.params.id);
-
-        // Update Status Logic
-        let updateSql = 'UPDATE orders SET status = $1';
-        let params = [status];
-
-        // Jika selesai, tandai paid juga
-        if (status === 'completed') {
-            updateSql += ', payment_status = $2, completed_at = CURRENT_TIMESTAMP WHERE id = $3';
-            params.push('paid', orderId);
-        } else {
-            updateSql += ' WHERE id = $2';
-            params.push(orderId);
-        }
-
-        await db.run(updateSql, params);
-
+        await db.run('UPDATE orders SET status = $1, payment_status = $2 WHERE id = $3',
+            [status, status === 'completed' ? 'paid' : 'unpaid', Number(req.params.id)]);
         const io = req.app.get('io');
-        if (io) io.emit('order-updated', { id: orderId, status });
-
-        // --- WHATSAPP TRIGGER ON COMPLETE ---
-        if (status === 'completed') {
-            const order = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
-            if (order && order.customer_phone) {
-
-                // LOGIC REVISI: Strict Check
-                // 1. Cek explicit order_type (jika ada kolom ini dan isinya 'delivery')
-                // 2. Atau cek implicit via online + address
-
-                const isExplicitDelivery = (order.order_type === 'delivery'); // Paling akurat jika frontend kirim ini
-                const isImplicitDelivery = (order.order_type === 'online' && order.customer_address && order.customer_address.length > 5 && !order.customer_address.toUpperCase().includes('PICKUP'));
-
-                const isDelivery = isExplicitDelivery || isImplicitDelivery;
-
-                if (isDelivery) {
-                    console.log(`[WA] SIKIP KIRIM PESAN SELESAI untuk Order Delivery #${order.order_number}`);
-                } else {
-                    // Kasus: PICKUP (Online) atau DINE-IN/TAKEAWAY (POS)
-                    // HANYA KIRIM JIKA BUKAN DELIVERY
-
-                    if (order.order_type === 'online' || order.order_type === 'pickup') {
-                        // Online Pickup -> Notif "Siap Diambil"
-                        const msg = formatOrderReady(order);
-                        await sendWhatsApp(order.customer_phone, msg);
-                    } else {
-                        // POS Offline -> Kirim Struk
-                        order.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
-                        const msg = formatOrderReceipt(order, order.items);
-                        await sendWhatsApp(order.customer_phone, msg);
-                    }
-                }
-            }
-        }
-        // ------------------------------------
-
+        if (io) io.emit('order-updated', { id: req.params.id, status });
         res.json({ message: 'Status updated' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.get('/pending', async (req, res) => {
     try {
-        // Ambil pending DAN unpaid (untuk pay later)
-        const orders = await db.all("SELECT * FROM orders WHERE status = 'pending' OR payment_status = 'unpaid' ORDER BY created_at DESC");
+        const orders = await db.all("SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC");
         for (let o of orders) {
             o.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(o.id)]);
         }
@@ -349,39 +227,21 @@ router.delete('/:id', async (req, res) => {
 
 router.get('/stats/today', async (req, res) => {
     try {
-        // Get today's date
-        const now = new Date();
-        const jktTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-        const todayStr = jktTime.toISOString().slice(0, 10);
+        // Get today's date in Asia/Jakarta (UTC+7)
+        const todayStr = new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString().slice(0, 10);
 
         console.log(`[STATS] Fetching today's stats for date: ${todayStr}`);
 
-        let sql;
-        if (db.type === 'sqlite') {
-            // SQLite Syntax
-            sql = `
-                SELECT 
-                    COUNT(*) as total_orders, 
-                    COALESCE(SUM(total), 0) as total_sales,
-                    COALESCE(SUM(total_hpp), 0) as total_cogs 
-                FROM orders 
-                WHERE status = 'completed' 
-                AND date(created_at) = $1
-            `;
-        } else {
-            // Postgres Syntax (Supabase)
-            sql = `
-                SELECT 
-                    COUNT(*) as total_orders, 
-                    COALESCE(SUM(total), 0) as total_sales,
-                    COALESCE(SUM(total_hpp), 0) as total_cogs 
-                FROM orders 
-                WHERE status = 'completed' 
-                AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date = $1::date
-            `;
-        }
+        const stats = await db.get(`
+            SELECT 
+                COUNT(*) as total_orders, 
+                COALESCE(SUM(total), 0) as total_sales,
+                COALESCE(SUM(total_hpp), 0) as total_cogs 
+            FROM orders 
+            WHERE status IN ('completed', 'pending') 
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+        `, [todayStr]);
 
-        const stats = await db.get(sql, [todayStr]);
         res.json(stats);
     } catch (err) {
         console.error("[STATS ERROR]", err);

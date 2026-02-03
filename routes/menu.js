@@ -1,31 +1,27 @@
 import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
-import { extname, dirname } from 'path';
+import { join, extname, dirname } from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
-import cloudinary from '../config/cloudinary.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const UPLOADS_DIR = join(__dirname, '..', 'uploads');
 
 const router = express.Router();
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
-
-// Helper function to upload buffer to Cloudinary
-const uploadToCloudinary = (fileBuffer) => {
-    return new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: 'menu_items' },
-            (error, result) => {
-                if (error) reject(error);
-                else resolve(result.secure_url);
-            }
-        );
-        uploadStream.end(fileBuffer);
-    });
-};
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        cb(null, UPLOADS_DIR);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + extname(file.originalname));
+    }
+});
+const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 } });
 
 // 1. PUBLIC MENU
 router.get('/', async (req, res) => {
@@ -34,7 +30,7 @@ router.get('/', async (req, res) => {
         SELECT m.*, c.name as category_name, c.slug as category_slug
         FROM menu_items m
         LEFT JOIN categories c ON m.category_id = c.id
-        WHERE (m.is_available::text IN ('true', '1', 't') OR m.is_available IS NULL)
+        WHERE (m.is_available::text = 'true' OR m.is_available::text = '1' OR m.is_available::text = 't')
     `;
     const params = [];
     if (category && category !== 'all') {
@@ -86,7 +82,7 @@ router.get('/admin/all', async (req, res) => {
 // 3. CATEGORIES
 router.get('/categories/all', async (req, res) => {
     try {
-        const categories = await db.all(`SELECT * FROM categories WHERE (is_active::text IN ('true', '1', 't') OR is_active IS NULL) ORDER BY display_order ASC`);
+        const categories = await db.all(`SELECT * FROM categories WHERE (is_active::text = 'true' OR is_active::text = '1' OR is_active::text = 't') ORDER BY display_order ASC`);
         res.json({ categories });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -95,7 +91,7 @@ router.post('/categories', async (req, res) => {
     const { name, emoji } = req.body;
     const slug = name.toLowerCase().replace(/ /g, '-');
     try {
-        const result = await db.run(`INSERT INTO categories (name, slug, emoji, is_active, display_order) VALUES ($1, $2, $3, 1, 0) RETURNING id`, [name, slug, emoji]);
+        const result = await db.run(`INSERT INTO categories (name, slug, emoji, is_active, display_order) VALUES ($1, $2, $3, true, 0) RETURNING id`, [name, slug, emoji]);
         res.status(201).json({ id: result.rows[0].id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -119,12 +115,7 @@ router.delete('/categories/:id', async (req, res) => {
 router.post('/', upload.single('image'), async (req, res) => {
     try {
         const { name, category_id, price, description, emoji, hpp, hpp_type, is_available } = req.body;
-
-        let image_url = null;
-        if (req.file) {
-            image_url = await uploadToCloudinary(req.file.buffer);
-        }
-
+        const image_url = req.file ? req.file.filename : null;
         const available = (is_available === 'true' || is_available === '1' || is_available === 1 || is_available === true);
         const result = await db.run(`
             INSERT INTO menu_items (name, category_id, price, hpp, hpp_type, description, emoji, image_url, is_available)
@@ -151,9 +142,8 @@ router.put('/:id', upload.single('image'), async (req, res) => {
         if (hpp_type !== undefined) { fields.push(`hpp_type = $${idx++}`); params.push(hpp_type); }
 
         if (req.file) {
-            const imageUrl = await uploadToCloudinary(req.file.buffer);
             fields.push(`image_url = $${idx++}`);
-            params.push(imageUrl);
+            params.push(req.file.filename);
         }
 
         if (fields.length === 0) return res.json({ message: 'No changes' });

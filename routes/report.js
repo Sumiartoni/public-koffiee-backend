@@ -25,22 +25,22 @@ router.get('/dashboard', async (req, res) => {
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
 
     // Sales Today
-    const sales = await db.get(`
+    const stats = await db.get(`
             SELECT 
                 COUNT(*) as total_orders, 
-                COALESCE(SUM(total), 0) as total_revenue,
+                COALESCE(SUM(total), 0) as total_sales,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
-            WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+            WHERE status IN ('completed', 'pending') 
+            AND created_at::date = $1::date
         `, [todayStr]);
 
     // Sales Yesterday
     const salesYesterday = await db.get(`
             SELECT COALESCE(SUM(total), 0) as total_revenue
             FROM orders 
-            WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+            WHERE status IN ('completed', 'pending') 
+            AND created_at::date = $1::date
         `, [yesterdayStr]);
 
     const expense = await db.get("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE expense_date = $1", [todayStr]);
@@ -57,34 +57,33 @@ router.get('/dashboard', async (req, res) => {
       revenueTrendVal = Math.round(((sales.total_revenue - salesYesterday.total_revenue) / salesYesterday.total_revenue) * 100);
     }
 
-    const topProducts = await db.all(`
-            SELECT 
-                mi.emoji,
-                oi.menu_item_name as name, 
-                SUM(oi.quantity) as total_sold,
-                mi.price,
-                mi.hpp,
-                SUM(oi.subtotal) as revenue
+    SELECT
+    mi.emoji,
+      oi.menu_item_name as name,
+      SUM(oi.quantity) as total_sold,
+      mi.price,
+      mi.hpp,
+      SUM(oi.subtotal) as revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
             WHERE o.status = 'completed' 
-            AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date = $1::date
+            AND o.created_at:: date = $1:: date
             GROUP BY oi.menu_item_id, oi.menu_item_name, mi.emoji, mi.price, mi.hpp
             ORDER BY total_sold DESC LIMIT 5
-        `, [todayStr]);
+      `, [todayStr]);
 
     const revenueTrend = await db.all(`
-            SELECT 
-                to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') as date, 
-                SUM(total) as revenue, 
-                SUM(total_hpp) as hpp
+    SELECT
+    to_char(created_at, 'YYYY-MM-DD') as date,
+      SUM(total) as revenue,
+      SUM(total_hpp) as hpp
             FROM orders
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date >= (NOW() AT TIME ZONE 'Asia/Jakarta')::date - INTERVAL '6 days'
+            AND created_at:: date >= (NOW() + INTERVAL '7 hours'):: date - INTERVAL '6 days'
             GROUP BY 1
             ORDER BY 1 ASC
-        `);
+  `);
 
     res.json({
       sales: parseInt(sales.total_revenue),
@@ -115,20 +114,20 @@ router.get('/advanced', async (req, res) => {
   const eNext = d.toISOString().slice(0, 10);
 
   try {
-    console.log(`[REPORT] Generating Advanced Report from ${s} to ${e}`);
+    console.log(`[REPORT] Generating Advanced Report from ${ s } to ${ e } `);
 
     // Summary & AOV
     const summaryRaw = await db.get(`
-            SELECT 
-                COUNT(*) as total_orders,
-                COALESCE(SUM(total), 0) as gross_sales,
-                COALESCE(SUM(discount), 0) as total_discount,
-                COALESCE(SUM(tax), 0) as total_tax,
-                COALESCE(SUM(total_hpp), 0) as total_cogs
+SELECT
+COUNT(*) as total_orders,
+  COALESCE(SUM(total), 0) as gross_sales,
+  COALESCE(SUM(discount), 0) as total_discount,
+  COALESCE(SUM(tax), 0) as total_tax,
+  COALESCE(SUM(total_hpp), 0) as total_cogs
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1::date AND $2::date 
+            WHERE created_at::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
-        `, [s, e]);
+  `, [s, e]);
 
     // Handle case where summaryRaw is null
     const summary = summaryRaw || {
@@ -139,29 +138,29 @@ router.get('/advanced', async (req, res) => {
     const paymentMethods = await db.all(`
             SELECT payment_method, COUNT(*) as count, SUM(total) as revenue
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1::date AND $2::date 
+            WHERE created_at::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
             GROUP BY payment_method
-        `, [s, e]);
+  `, [s, e]);
 
     // Order Type Breakdown
     const orderTypes = await db.all(`
             SELECT order_type, COUNT(*) as count, SUM(total) as revenue
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1::date AND $2::date 
+            WHERE created_at::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
             GROUP BY order_type
-        `, [s, e]);
+  `, [s, e]);
 
     // Cashier Performance
     const cashiers = await db.all(`
             SELECT COALESCE(users.name, 'Staff') as name, COUNT(*) as orders, SUM(orders.total) as revenue
             FROM orders
             LEFT JOIN users ON orders.user_id = users.id
-            WHERE (orders.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1::date AND $2::date 
+            WHERE orders.created_at::date BETWEEN $1::date AND $2:: date 
             AND orders.status = 'completed'
             GROUP BY COALESCE(users.name, 'Staff')
-        `, [s, e]);
+  `, [s, e]);
 
     // Category Analysis
     // Postgres GROUP BY logic requires strict grouping
@@ -171,21 +170,21 @@ router.get('/advanced', async (req, res) => {
             JOIN orders o ON oi.order_id = o.id
             JOIN menu_items mi ON oi.menu_item_id = mi.id
             JOIN categories c ON mi.category_id = c.id
-            WHERE o.created_at >= $1::timestamp AND o.created_at < $2::timestamp 
+            WHERE o.created_at::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY c.id, c.name
-        `, [s, eNext]);
+  `, [s, e]);
 
     // Product Analysis (NEW)
     const products = await db.all(`
             SELECT menu_item_name as name, SUM(quantity) as volume, SUM(oi.subtotal) as revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
-            WHERE o.created_at >= $1::timestamp AND o.created_at < $2::timestamp 
+            WHERE o.created_at::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY menu_item_name
             ORDER BY revenue DESC
-        `, [s, eNext]);
+  `, [s, e]);
 
     // Void Orders - Check if column exists first or try/catch individual query if worried
     let voids = [];
@@ -193,9 +192,9 @@ router.get('/advanced', async (req, res) => {
       voids = await db.all(`
             SELECT order_number, customer_name, total, notes as void_reason, created_at
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $1::date AND $2::date 
+            WHERE created_at::date BETWEEN $1::date AND $2:: date 
             AND status = 'cancelled'
-        `, [s, e]);
+  `, [s, e]);
     } catch (e) {
       console.error("Void query failed", e.message);
     }
@@ -247,16 +246,16 @@ router.get('/breakdown/:type', async (req, res) => {
 
   try {
     const data = await db.all(`
-            SELECT 
-                to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta', $1) as label, 
-                COUNT(*) as orders, 
-                SUM(total) as revenue
+SELECT
+to_char(created_at, $1) as label,
+  COUNT(*) as orders,
+  SUM(total) as revenue
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $2::date AND $3::date 
+            WHERE created_at::date BETWEEN $2::date AND $3:: date 
             AND status = 'completed'
             GROUP BY 1
             ORDER BY 1 ASC
-        `, [format, s, (end || s)]);
+  `, [format, s, (end || s)]);
 
     res.json({ data });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -271,7 +270,7 @@ router.get('/customers', async (req, res) => {
             WHERE status = 'completed' AND customer_name IS NOT NULL AND customer_name != 'Walk-in Customer'
             GROUP BY customer_name
             ORDER BY total_spent DESC
-        `);
+  `);
     res.json({ customers: data });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

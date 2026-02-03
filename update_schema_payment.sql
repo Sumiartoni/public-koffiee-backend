@@ -1,4 +1,0 @@
--- Add Payment Gateway Related Columns
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS unique_code INTEGER DEFAULT 0;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS final_amount INTEGER DEFAULT 0;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_expires_at TIMESTAMP;

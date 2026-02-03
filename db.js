@@ -27,9 +27,16 @@ class DBAdapter {
             try {
                 const pg = await import('pg');
                 const { Pool } = pg.default;
+
+                // Disable SSL for local PostgreSQL
+                const dbUrl = process.env.DATABASE_URL || '';
+                const sslConfig = dbUrl.includes('sslmode=disable')
+                    ? false
+                    : { rejectUnauthorized: false };
+
                 this.pool = new Pool({
                     connectionString: process.env.DATABASE_URL,
-                    ssl: { rejectUnauthorized: false }
+                    ssl: sslConfig
                 });
                 const test = await this.pool.query('SELECT NOW()');
                 console.log(`✅ Supabase Connected at: ${test.rows[0].now}`);

@@ -7,7 +7,7 @@ const router = express.Router();
 // PROMOTIONS (Buy X Get Y, etc)
 // -----------------------------------------------------------------
 
-// GET all promotions (Admin/POS)
+// GET all promotions
 router.get('/promotions', async (req, res) => {
     try {
         const promotions = await db.all(`
@@ -23,79 +23,38 @@ router.get('/promotions', async (req, res) => {
     }
 });
 
-// GET active promotions for Public Web (Filter based on logic)
+// GET active promotions for Public Web
 router.get('/public/active', async (req, res) => {
-    try {
-        // PERINTAH: Program promo (Buy X Get Y) muncul di POS TANPA muncul di web pesan online
-        const promotions = []; // Kosongkan untuk Public Web sesuai instruksi
-
-        // PERINTAH: Program diskon yang sama seperti pada aplikasi mobile POS muncul di web
-        // Voucher diskon muncul input masukkan kode voucher (Frontend handling)
-
-        // FIX: PostgreSQL compatibility - CAST to text first, use IN operator
-        const discounts = await db.all(`
-            SELECT d.* 
-            FROM discounts d
-            WHERE d.is_active::text IN ('true', '1', 't')
-            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
-            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
-            ORDER BY d.created_at DESC
-        `);
-
-        console.log('[PUBLIC] Active discounts fetched:', discounts.length);
-        res.json({ promotions, discounts });
-    } catch (err) {
-        console.error('[PUBLIC] Error fetching discounts:', err.message);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// GET active promotions for Mobile POS
-router.get('/pos/active', async (req, res) => {
     try {
         const promotions = await db.all(`
             SELECT * FROM promotions 
-            WHERE is_active::text IN ('true', '1', 't')
-            AND (start_date IS NULL OR start_date <= CURRENT_DATE)
-            AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+            WHERE (is_active::text = 'true' OR is_active::text = '1' OR is_active::text = 't')
             ORDER BY created_at DESC
         `);
         const discounts = await db.all(`
-            SELECT d.* 
-            FROM discounts d
-            WHERE d.is_active::text IN ('true', '1', 't')
-            AND (d.start_date IS NULL OR d.start_date <= CURRENT_DATE)
-            AND (d.end_date IS NULL OR d.end_date >= CURRENT_DATE)
-            ORDER BY d.created_at DESC
+            SELECT * FROM discounts 
+            WHERE (is_active::text = 'true' OR is_active::text = '1' OR is_active::text = 't')
+            ORDER BY created_at DESC
         `);
-        console.log('[POS] Active promotions:', promotions.length, 'discounts:', discounts.length);
+        // Public web expects both in one response often, or separate
         res.json({ promotions, discounts });
     } catch (err) {
-        console.error('[POS] Error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
 // Create promotion
 router.post('/promotions', async (req, res) => {
-    let { name, description, type, buy_item_id, get_item_id, buy_qty, get_qty, min_purchase, start_date, end_date, is_active } = req.body;
+    const { name, type, buy_item_id, get_item_id, buy_qty, get_qty, discount_percent, min_spend, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-
-        // Sanitize: Convert empty strings to null for optional fields
-        buy_item_id = (buy_item_id && buy_item_id !== "") ? Number(buy_item_id) : null;
-        get_item_id = (get_item_id && get_item_id !== "") ? Number(get_item_id) : null;
-        start_date = (start_date && start_date !== "") ? start_date : null;
-        end_date = (end_date && end_date !== "") ? end_date : null;
-
         const result = await db.run(`
-            INSERT INTO promotions (name, description, type, buy_item_id, get_item_id, buy_qty, get_qty, min_purchase, start_date, end_date, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO promotions (name, type, buy_item_id, get_item_id, buy_qty, get_qty, discount_percent, min_spend, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
         `, [
-            name, description || null, type, buy_item_id, get_item_id,
-            Number(buy_qty) || 0, Number(get_qty) || 0, Number(min_purchase) || 0,
-            start_date, end_date,
+            name, type, buy_item_id || null, get_item_id || null,
+            Number(buy_qty) || 0, Number(get_qty) || 0, Number(discount_percent) || 0, Number(min_spend) || 0,
             isActiveVal
         ]);
         const id = (result.rows && result.rows[0]) ? result.rows[0].id : result.lastId;
@@ -107,26 +66,18 @@ router.post('/promotions', async (req, res) => {
 
 // Update Promotion
 router.put('/promotions/:id', async (req, res) => {
-    let { name, description, type, buy_item_id, get_item_id, buy_qty, get_qty, min_purchase, start_date, end_date, is_active } = req.body;
+    const { name, type, buy_item_id, get_item_id, buy_qty, get_qty, discount_percent, min_spend, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-
-        // Sanitize
-        buy_item_id = (buy_item_id && buy_item_id !== "") ? Number(buy_item_id) : null;
-        get_item_id = (get_item_id && get_item_id !== "") ? Number(get_item_id) : null;
-        start_date = (start_date && start_date !== "") ? start_date : null;
-        end_date = (end_date && end_date !== "") ? end_date : null;
-
         await db.run(`
             UPDATE promotions 
-            SET name = $1, description = $2, type = $3, buy_item_id = $4, get_item_id = $5, 
-                buy_qty = $6, get_qty = $7, min_purchase = $8, start_date = $9, end_date = $10, is_active = $11,
+            SET name = $1, type = $2, buy_item_id = $3, get_item_id = $4, 
+                buy_qty = $5, get_qty = $6, discount_percent = $7, min_spend = $8, is_active = $9,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $12
+            WHERE id = $10
         `, [
-            name, description || null, type, buy_item_id, get_item_id,
-            Number(buy_qty) || 0, Number(get_qty) || 0, Number(min_purchase) || 0,
-            start_date, end_date,
+            name, type, buy_item_id || null, get_item_id || null,
+            Number(buy_qty) || 0, Number(get_qty) || 0, Number(discount_percent) || 0, Number(min_spend) || 0,
             isActiveVal,
             Number(req.params.id)
         ]);
@@ -152,41 +103,22 @@ router.delete('/promotions/:id', async (req, res) => {
 
 router.get('/discounts', async (req, res) => {
     try {
-        const discounts = await db.all(`
-            SELECT d.*
-            FROM discounts d
-            ORDER BY d.created_at DESC
-        `);
-        console.log('[BACKOFFICE] All discounts fetched:', discounts.length);
-        if (discounts.length > 0) {
-            console.log('[BACKOFFICE] First discount:', discounts[0]);
-        }
+        const discounts = await db.all('SELECT * FROM discounts ORDER BY created_at DESC');
         res.json({ discounts });
     } catch (err) {
-        console.error('[BACKOFFICE] Error fetching discounts:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
 router.post('/discounts', async (req, res) => {
-    let { name, code, type, value, min_purchase, max_discount, start_date, end_date, is_active } = req.body;
+    const { name, code, type, value, min_purchase, max_discount, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-
-        // Sanitize
-        start_date = (start_date && start_date !== "") ? start_date : null;
-        end_date = (end_date && end_date !== "") ? end_date : null;
-        code = (code && code !== "") ? code : null;
-        max_discount = (max_discount && max_discount !== "") ? Number(max_discount) : null;
-
         const result = await db.run(`
-            INSERT INTO discounts (name, code, type, value, min_purchase, max_discount, start_date, end_date, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO discounts (name, code, type, value, min_purchase, max_discount, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
-        `, [
-            name, code, type, Number(value), Number(min_purchase) || 0,
-            max_discount, start_date, end_date, isActiveVal
-        ]);
+        `, [name, code, type, Number(value), Number(min_purchase) || 0, Number(max_discount) || null, isActiveVal]);
         const id = (result.rows && result.rows[0]) ? result.rows[0].id : result.lastId;
         res.status(201).json({ id, message: 'Diskon berhasil dibuat' });
     } catch (err) {
@@ -195,27 +127,15 @@ router.post('/discounts', async (req, res) => {
 });
 
 router.put('/discounts/:id', async (req, res) => {
-    let { name, code, type, value, min_purchase, max_discount, start_date, end_date, is_active } = req.body;
+    const { name, code, type, value, min_purchase, max_discount, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-
-        // Sanitize
-        start_date = (start_date && start_date !== "") ? start_date : null;
-        end_date = (end_date && end_date !== "") ? end_date : null;
-        code = (code && code !== "") ? code : null;
-        max_discount = (max_discount && max_discount !== "") ? Number(max_discount) : null;
-
         await db.run(`
             UPDATE discounts 
-            SET name = $1, code = $2, type = $3, value = $4, min_purchase = $5, max_discount = $6, 
-                start_date = $7, end_date = $8, is_active = $9,
+            SET name = $1, code = $2, type = $3, value = $4, min_purchase = $5, max_discount = $6, is_active = $7,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $10
-        `, [
-            name, code, type, Number(value), Number(min_purchase) || 0,
-            max_discount, start_date, end_date, isActiveVal,
-            Number(req.params.id)
-        ]);
+            WHERE id = $8
+        `, [name, code, type, Number(value), Number(min_purchase) || 0, Number(max_discount) || null, isActiveVal, Number(req.params.id)]);
         res.json({ message: 'Diskon diperbarui' });
     } catch (err) {
         res.status(500).json({ error: err.message });
