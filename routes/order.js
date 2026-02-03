@@ -103,11 +103,18 @@ router.post('/', async (req, res) => {
         let finalStatus = req.body.status || 'pending';
         let finalPaymentStatus = req.body.payment_status || 'unpaid';
 
-        // Override Web/Online Orders selalu Unpaid di awal (Menunggu Pembayaran / Konfirmasi)
-        // User Request: Web Order -> Status 'unpaid' dulu. Setelah bayar -> Status 'pending' (Masuk POS).
-        if (order_type === 'online' || order_type === 'booking') {
-            finalStatus = 'unpaid';
-            finalPaymentStatus = 'unpaid';
+        // Override Web/Online Orders:
+        // - Jika QRIS: Status 'unpaid' (Tunggu bayar agar POS tidak bunyi dulu)
+        // - Jika Cash: Status 'pending' (Langsung masuk POS agar bisa disiapkan)
+        const onlineTypes = ['online', 'booking', 'delivery', 'pickup'];
+        if (onlineTypes.includes(String(order_type || '').toLowerCase())) {
+            if (payment_method === 'qris') {
+                finalStatus = 'unpaid';
+                finalPaymentStatus = 'unpaid';
+            } else {
+                finalStatus = 'pending';
+                finalPaymentStatus = 'unpaid'; // Tetap unpaid sampai dibayar tunai
+            }
         }
 
         console.log(`Calculated Total: ${total}`);
