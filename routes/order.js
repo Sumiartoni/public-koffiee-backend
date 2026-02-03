@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { sendWhatsApp, formatNewOrder, formatOrderReady, formatWalkInReceipt } from '../services/whatsapp.js';
+import { processQrisPayment } from '../services/payment/index.js';
 
 const router = express.Router();
 
@@ -158,6 +159,20 @@ router.post('/', async (req, res) => {
         const io = req.app.get('io');
         if (io) io.emit('new-order', fullOrder);
 
+        // QRIS PROCESSING (NEW)
+        let paymentData = null;
+        if (payment_method === 'qris' || (fullOrder.payment_method === 'qris')) {
+            try {
+                console.log(`[QRIS] Generating dynamic QRIS for Order ${orderId}`);
+                paymentData = await processQrisPayment(orderId);
+                // paymentData contains: { qris_string, qris_image, final_amount, unique_code, expires_at }
+            } catch (qrisErr) {
+                console.error("[QRIS ERROR]", qrisErr.message);
+                // Don't fail the order, just return error in payload? Or maybe user should know.
+                // We'll proceed but paymentData will be null.
+            }
+        }
+
         // Send WhatsApp Notification
         if (customer_phone) {
             const typeLower = (order_type || '').toLowerCase();
@@ -180,7 +195,8 @@ router.post('/', async (req, res) => {
             message: 'Order created',
             id: orderId,
             order_number: orderNumber,
-            order: fullOrder
+            order: fullOrder,
+            payment: paymentData // Include QRIS Data here
         });
 
     } catch (err) {

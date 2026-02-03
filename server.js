@@ -19,6 +19,7 @@ import ingredientRoutes from './routes/ingredient.js';
 import receiptRoutes from './routes/receipt.js';
 import promoRoutes from './routes/promo.js';
 import extraRoutes from './routes/extra.js';
+import paymentRoutes from './routes/payment.js';
 
 dotenv.config();
 
@@ -139,6 +140,7 @@ app.use('/api/ingredients', ingredientRoutes);
 app.use('/api/receipts', receiptRoutes);
 app.use('/api/promos', promoRoutes);
 app.use('/api/extras', extraRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // QRIS image endpoint
 app.get('/api/qris/image', (req, res) => {
