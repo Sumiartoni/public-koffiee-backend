@@ -18,7 +18,7 @@ export const sendWhatsApp = async (target, message) => {
         formattedTarget = formattedTarget.replace(/[^0-9]/g, '');
 
         if (!FONNTE_TOKEN) {
-            console.warn('[WA] FONNTE_TOKEN missing');
+            console.warn('UUqCy6MARPx9jPpaMsAT');
         }
 
         console.log(`[WA] Sending to ${formattedTarget}...`);
