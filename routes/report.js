@@ -57,21 +57,22 @@ router.get('/dashboard', async (req, res) => {
       revenueTrendVal = Math.round(((sales.total_revenue - salesYesterday.total_revenue) / salesYesterday.total_revenue) * 100);
     }
 
-    SELECT
-    mi.emoji,
-      oi.menu_item_name as name,
-      SUM(oi.quantity) as total_sold,
-      mi.price,
-      mi.hpp,
-      SUM(oi.subtotal) as revenue
+    const topProducts = await db.all(`
+            SELECT 
+                mi.emoji,
+                oi.menu_item_name as name, 
+                SUM(oi.quantity) as total_sold,
+                mi.price,
+                mi.hpp,
+                SUM(oi.subtotal) as revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
             WHERE o.status = 'completed' 
-            AND o.created_at:: date = $1:: date
+            AND o.created_at::date = $1::date
             GROUP BY oi.menu_item_id, oi.menu_item_name, mi.emoji, mi.price, mi.hpp
             ORDER BY total_sold DESC LIMIT 5
-      `, [todayStr]);
+        `, [todayStr]);
 
     const revenueTrend = await db.all(`
     SELECT
@@ -114,7 +115,7 @@ router.get('/advanced', async (req, res) => {
   const eNext = d.toISOString().slice(0, 10);
 
   try {
-    console.log(`[REPORT] Generating Advanced Report from ${ s } to ${ e } `);
+    console.log(`[REPORT] Generating Advanced Report from ${s} to ${e} `);
 
     // Summary & AOV
     const summaryRaw = await db.get(`
