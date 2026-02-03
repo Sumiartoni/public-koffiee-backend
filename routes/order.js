@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { sendWhatsApp, formatNewOrder } from '../services/whatsapp.js';
 
 const router = express.Router();
 
@@ -46,6 +47,53 @@ router.post('/', async (req, res) => {
         let totalHpp = 0;
         const validItems = [];
 
+        for (const item of items) {
+            let price = Number(item.price) || 0;
+            let hpp = 0;
+            let menuItemId = Number(item.menu_item_id);
+            let menuItemName = item.name || item.menu_item_name || 'Unknown Item';
+
+            // Try to lookup from DB to get authoritative price/hpp
+            const menuItem = await db.get('SELECT * FROM menu_items WHERE id = $1', [menuItemId]);
+
+            if (menuItem) {
+                price = Number(menuItem.price);
+                hpp = Number(menuItem.hpp);
+                menuItemName = menuItem.name;
+
+                // Stock update (Background attempt)
+                try {
+                    const recipes = await db.all('SELECT * FROM recipes WHERE menu_item_id = $1', [menuItem.id]);
+                    for (const recipe of recipes) {
+                        const deductQty = Number(recipe.quantity) * (Number(item.quantity) || 1);
+                        await db.run('UPDATE ingredients SET stock_qty = stock_qty - $1 WHERE id = $2', [deductQty, recipe.ingredient_id]);
+                    }
+                } catch (stockErr) {
+                    console.error("[STOCK UPDATE ERROR] Ignored to let order pass:", stockErr.message);
+                }
+            } else {
+                console.warn(`[ORDER WARNING] Item ID ${menuItemId} not found in DB. Using frontend price: ${price}`);
+            }
+
+            const qty = Number(item.quantity) || 1;
+            const itemSubtotal = price * qty;
+            const itemHpp = hpp * qty;
+
+            subtotal += itemSubtotal;
+            totalHpp += itemHpp;
+
+            validItems.push({
+                menu_item_id: menuItemId,
+                name: menuItemName,
+                quantity: qty,
+                price: price,
+                hpp: hpp,
+                subtotal: itemSubtotal,
+                notes: item.notes || '',
+                extras: item.extras || null
+            });
+        }
+
         // Check if status is explicitly provided (e.g. from POS)
         // If not, default to 'pending' for ALL web/online orders to ensure confirmation is needed.
         let finalStatus = req.body.status || 'pending';
@@ -58,7 +106,6 @@ router.post('/', async (req, res) => {
                 finalPaymentStatus = 'unpaid';
             }
         }
-
 
         const tax = 0;
         const total = subtotal - (Number(discount) || 0);
@@ -133,6 +180,12 @@ router.post('/', async (req, res) => {
             if (io) {
                 console.log(`Broadcasting new-order via Socket.IO`);
                 io.emit('new-order', fullOrder);
+            }
+
+            // SEND WHATSAPP NOTIFICATION
+            if (customer_phone) {
+                const waMsg = formatNewOrder(fullOrder);
+                sendWhatsApp(customer_phone, waMsg).catch(err => console.error("WA Send Failed:", err.message));
             }
         }
 
