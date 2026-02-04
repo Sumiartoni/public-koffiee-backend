@@ -28,7 +28,7 @@ router.get('/dashboard', async (req, res) => {
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [todayStr, 'Asia/Jakarta']);
 
     // Sales Yesterday
@@ -36,7 +36,7 @@ router.get('/dashboard', async (req, res) => {
             SELECT COALESCE(SUM(total), 0) as total_revenue
             FROM orders 
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [yesterdayStr, 'Asia/Jakarta']);
 
     const expense = await db.get("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE expense_date = $1", [todayStr]);
@@ -65,19 +65,19 @@ router.get('/dashboard', async (req, res) => {
             JOIN orders o ON oi.order_id = o.id
             LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
             WHERE o.status = 'completed' 
-            AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (o.created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_id, oi.menu_item_name, mi.emoji, mi.price, mi.hpp
             ORDER BY total_sold DESC LIMIT 5
         `, [todayStr, 'Asia/Jakarta']);
 
     const revenueTrend = await db.all(`
     SELECT
-    to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE $1, 'YYYY-MM-DD') as date,
+    to_char(created_at AT TIME ZONE $1, 'YYYY-MM-DD') as date,
       SUM(total) as revenue,
       SUM(total_hpp) as hpp
             FROM orders
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $1)::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE $1)::date - INTERVAL '6 days'
+            AND (created_at AT TIME ZONE $1)::date >= (CURRENT_TIMESTAMP AT TIME ZONE $1)::date - INTERVAL '6 days'
             GROUP BY 1
             ORDER BY 1 ASC
   `, ['Asia/Jakarta']);
@@ -88,6 +88,7 @@ router.get('/dashboard', async (req, res) => {
       gross_profit,
       net_profit,
       gross_margin,
+      net_margin,
       net_margin,
       revenue_trend: revenueTrendVal,
       aov: sales.total_orders > 0 ? Math.round(sales.total_revenue / sales.total_orders) : 0,
@@ -122,7 +123,7 @@ COUNT(*) as total_orders,
   COALESCE(SUM(tax), 0) as total_tax,
   COALESCE(SUM(total_hpp), 0) as total_cogs
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
   `, [s, e, 'Asia/Jakarta']);
 
@@ -135,29 +136,29 @@ COUNT(*) as total_orders,
     const paymentMethods = await db.all(`
             SELECT payment_method, COUNT(*) as count, SUM(total) as revenue
             FROM orders
-            WHERE created_at::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
             GROUP BY payment_method
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Order Type Breakdown
     const orderTypes = await db.all(`
             SELECT order_type, COUNT(*) as count, SUM(total) as revenue
             FROM orders
-            WHERE created_at::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
             GROUP BY order_type
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Cashier Performance
     const cashiers = await db.all(`
             SELECT COALESCE(users.name, 'Staff') as name, COUNT(*) as orders, SUM(orders.total) as revenue
             FROM orders
             LEFT JOIN users ON orders.user_id = users.id
-            WHERE orders.created_at::date BETWEEN $1::date AND $2:: date 
+            WHERE (orders.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND orders.status = 'completed'
             GROUP BY COALESCE(users.name, 'Staff')
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Category Analysis
     // Postgres GROUP BY logic requires strict grouping
@@ -167,7 +168,7 @@ COUNT(*) as total_orders,
             JOIN orders o ON oi.order_id = o.id
             JOIN menu_items mi ON oi.menu_item_id = mi.id
             JOIN categories c ON mi.category_id = c.id
-            WHERE (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
+            WHERE (o.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY c.id, c.name
   `, [s, e, 'Asia/Jakarta']);
@@ -177,7 +178,7 @@ COUNT(*) as total_orders,
             SELECT menu_item_name as name, SUM(quantity) as volume, SUM(oi.subtotal) as revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
-            WHERE (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
+            WHERE (o.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY menu_item_name
             ORDER BY revenue DESC
@@ -189,7 +190,7 @@ COUNT(*) as total_orders,
       voids = await db.all(`
             SELECT order_number, customer_name, total, notes as void_reason, created_at
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'cancelled'
   `, [s, e, 'Asia/Jakarta']);
     } catch (e) {
@@ -244,11 +245,11 @@ router.get('/breakdown/:type', async (req, res) => {
   try {
     const data = await db.all(`
 SELECT
-to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE $4, $1) as label,
+to_char(created_at AT TIME ZONE $4, $1) as label,
   COUNT(*) as orders,
   SUM(total) as revenue
             FROM orders
-            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $4)::date BETWEEN $2::date AND $3:: date 
+            WHERE (created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3:: date 
             AND status = 'completed'
             GROUP BY 1
             ORDER BY 1 ASC

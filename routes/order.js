@@ -318,7 +318,7 @@ router.get('/stats/today', async (req, res) => {
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [todayStr, timezone]);
 
         // Payment Breakdown
@@ -326,7 +326,7 @@ router.get('/stats/today', async (req, res) => {
             SELECT payment_method, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY payment_method
         `, [todayStr, timezone]);
 
@@ -335,7 +335,7 @@ router.get('/stats/today', async (req, res) => {
             SELECT order_type, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
             WHERE status = 'completed' 
-            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY order_type
         `, [todayStr, timezone]);
 
@@ -348,7 +348,7 @@ router.get('/stats/today', async (req, res) => {
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             WHERE o.status = 'completed' 
-            AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+            AND (o.created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_name
             ORDER BY total_qty DESC
             LIMIT 5
