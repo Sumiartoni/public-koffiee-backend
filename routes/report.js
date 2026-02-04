@@ -72,15 +72,15 @@ router.get('/dashboard', async (req, res) => {
 
     const revenueTrend = await db.all(`
     SELECT
-    to_char(created_at, 'YYYY-MM-DD') as date,
+    to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE $1, 'YYYY-MM-DD') as date,
       SUM(total) as revenue,
       SUM(total_hpp) as hpp
             FROM orders
             WHERE status = 'completed' 
-            AND created_at:: date >= (NOW() + INTERVAL '7 hours'):: date - INTERVAL '6 days'
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $1)::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE $1)::date - INTERVAL '6 days'
             GROUP BY 1
             ORDER BY 1 ASC
-  `);
+  `, ['Asia/Jakarta']);
 
     res.json({
       sales: parseInt(sales.total_revenue),
