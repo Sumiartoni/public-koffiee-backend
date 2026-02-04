@@ -192,8 +192,8 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Send WhatsApp Notification
-        if (customer_phone) {
+        // Send WhatsApp Notification (Skip if Pending - will be sent when completed)
+        if (customer_phone && fullOrder.status !== 'pending') {
             const typeLower = (order_type || '').toLowerCase();
             let waMsg = '';
 
@@ -268,10 +268,14 @@ router.patch('/:id/status', async (req, res) => {
                     const msg = formatOrderReady(order);
                     sendWhatsApp(order.customer_phone, msg);
                 }
+            } else if (order.customer_phone) {
+                // Untuk Walk-in / Dine-in yang baru saja diselesaikan -> Kirim Struk
+                const msg = formatWalkInReceipt(order);
+                sendWhatsApp(order.customer_phone, msg);
             }
         }
 
-        res.json({ message: 'Status updated' });
+        res.json({ message: 'Status updated', order });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -304,7 +308,8 @@ router.get('/stats/today', async (req, res) => {
     try {
         const todayStr = new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString().slice(0, 10);
 
-        const stats = await db.get(`
+        // Basic Stats
+        const basicStats = await db.get(`
             SELECT 
                 COUNT(*) as total_orders, 
                 COALESCE(SUM(total), 0) as total_sales,
@@ -313,9 +318,40 @@ router.get('/stats/today', async (req, res) => {
             WHERE status = 'completed' 
             AND created_at::date = $1::date
         `, [todayStr]);
-        // NOTE: 'status = completed' ensures pending orders are NOT in dashboard revenue.
 
-        res.json(stats);
+        // Payment Breakdown (Cash, QRIS)
+        const paymentStats = await db.all(`
+            SELECT payment_method, COUNT(*) as count, COALESCE(SUM(total), 0) as total
+            FROM orders 
+            WHERE status = 'completed' AND created_at::date = $1::date
+            GROUP BY payment_method
+        `, [todayStr]);
+
+        // Order Type Breakdown (Dine-in, Takeaway, etc)
+        const typeStats = await db.all(`
+            SELECT order_type, COUNT(*) as count, COALESCE(SUM(total), 0) as total
+            FROM orders 
+            WHERE status = 'completed' AND created_at::date = $1::date
+            GROUP BY order_type
+        `, [todayStr]);
+
+        // Top Selling Items today
+        const topItems = await db.all(`
+            SELECT menu_item_name as name, SUM(quantity) as qty, SUM(subtotal) as total
+            FROM order_items 
+            JOIN orders ON order_items.order_id = orders.id
+            WHERE orders.status = 'completed' AND orders.created_at::date = $1::date
+            GROUP BY menu_item_name
+            ORDER BY qty DESC
+            LIMIT 5
+        `, [todayStr]);
+
+        res.json({
+            ...basicStats,
+            payment_breakdown: paymentStats,
+            type_breakdown: typeStats,
+            top_items: topItems
+        });
     } catch (err) {
         console.error("[STATS ERROR]", err);
         res.status(500).json({ error: err.message });
