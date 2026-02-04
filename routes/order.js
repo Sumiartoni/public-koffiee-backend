@@ -337,11 +337,11 @@ router.get('/stats/today', async (req, res) => {
 
         // Top Selling Items today
         const topItems = await db.all(`
-            SELECT menu_item_name as name, SUM(quantity) as qty, SUM(subtotal) as total
+            SELECT order_items.menu_item_name as name, SUM(order_items.quantity) as qty, SUM(order_items.subtotal) as total
             FROM order_items 
             JOIN orders ON order_items.order_id = orders.id
             WHERE orders.status = 'completed' AND orders.created_at::date = $1::date
-            GROUP BY menu_item_name
+            GROUP BY order_items.menu_item_name
             ORDER BY qty DESC
             LIMIT 5
         `, [todayStr]);
