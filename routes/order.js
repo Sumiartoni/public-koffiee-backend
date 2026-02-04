@@ -308,6 +308,8 @@ router.get('/stats/today', async (req, res) => {
     try {
         const todayStr = new Date(new Date().getTime() + (7 * 60 * 60 * 1000)).toISOString().slice(0, 10);
 
+        const timezone = 'Asia/Jakarta';
+
         // Basic Stats
         const basicStats = await db.get(`
             SELECT 
@@ -316,26 +318,28 @@ router.get('/stats/today', async (req, res) => {
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status = 'completed' 
-            AND created_at::date = $1::date
-        `, [todayStr]);
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+        `, [todayStr, timezone]);
 
-        // Payment Breakdown (Cash, QRIS)
+        // Payment Breakdown
         const paymentStats = await db.all(`
             SELECT payment_method, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
-            WHERE status = 'completed' AND created_at::date = $1::date
+            WHERE status = 'completed' 
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
             GROUP BY payment_method
-        `, [todayStr]);
+        `, [todayStr, timezone]);
 
-        // Order Type Breakdown (Dine-in, Takeaway, etc)
+        // Order Type Breakdown
         const typeStats = await db.all(`
             SELECT order_type, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
-            WHERE status = 'completed' AND created_at::date = $1::date
+            WHERE status = 'completed' 
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
             GROUP BY order_type
-        `, [todayStr]);
+        `, [todayStr, timezone]);
 
-        // Top Selling Items today
+        // Top Selling Items
         const topItems = await db.all(`
             SELECT 
                 oi.menu_item_name as item_name, 
@@ -343,16 +347,17 @@ router.get('/stats/today', async (req, res) => {
                 SUM(oi.subtotal) as total_revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
-            WHERE o.status = 'completed' AND o.created_at::date = $1::date
+            WHERE o.status = 'completed' 
+            AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_name
             ORDER BY total_qty DESC
             LIMIT 5
-        `, [todayStr]);
+        `, [todayStr, timezone]);
 
         res.json({
-            total_orders: basicStats.total_orders,
-            total_sales: basicStats.total_revenue,
-            total_cogs: basicStats.total_cogs,
+            total_orders: parseInt(basicStats.total_orders || 0),
+            total_sales: parseFloat(basicStats.total_revenue || 0),
+            total_cogs: parseFloat(basicStats.total_cogs || 0),
             payment_breakdown: paymentStats.map(s => ({
                 payment_method: s.payment_method,
                 count: parseInt(s.count),
