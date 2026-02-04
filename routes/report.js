@@ -8,13 +8,9 @@ const getRange = (start, end) => {
   const nowWIB = new Date(new Date().getTime() + (7 * 60 * 60 * 1000));
   const s = start || nowWIB.toISOString().slice(0, 10);
   const e = end || nowWIB.toISOString().slice(0, 10);
+  const tz = 'Asia/Jakarta';
 
-  // Calculate next day for < queries
-  const d = new Date(e);
-  d.setDate(d.getDate() + 1);
-  const eNext = d.toISOString().slice(0, 10);
-
-  return { s, e, eNext };
+  return { s, e, tz };
 };
 
 // 1. DASHBOARD SUMMARY
@@ -32,16 +28,16 @@ router.get('/dashboard', async (req, res) => {
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status = 'completed' 
-            AND created_at::date = $1::date
-        `, [todayStr]);
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+        `, [todayStr, 'Asia/Jakarta']);
 
     // Sales Yesterday
     const salesYesterday = await db.get(`
             SELECT COALESCE(SUM(total), 0) as total_revenue
             FROM orders 
             WHERE status = 'completed' 
-            AND created_at::date = $1::date
-        `, [yesterdayStr]);
+            AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
+        `, [yesterdayStr, 'Asia/Jakarta']);
 
     const expense = await db.get("SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE expense_date = $1", [todayStr]);
 
@@ -69,10 +65,10 @@ router.get('/dashboard', async (req, res) => {
             JOIN orders o ON oi.order_id = o.id
             LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
             WHERE o.status = 'completed' 
-            AND o.created_at::date = $1::date
+            AND (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_id, oi.menu_item_name, mi.emoji, mi.price, mi.hpp
             ORDER BY total_sold DESC LIMIT 5
-        `, [todayStr]);
+        `, [todayStr, 'Asia/Jakarta']);
 
     const revenueTrend = await db.all(`
     SELECT
@@ -126,9 +122,9 @@ COUNT(*) as total_orders,
   COALESCE(SUM(tax), 0) as total_tax,
   COALESCE(SUM(total_hpp), 0) as total_cogs
             FROM orders
-            WHERE created_at::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'completed'
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Handle case where summaryRaw is null
     const summary = summaryRaw || {
@@ -171,21 +167,21 @@ COUNT(*) as total_orders,
             JOIN orders o ON oi.order_id = o.id
             JOIN menu_items mi ON oi.menu_item_id = mi.id
             JOIN categories c ON mi.category_id = c.id
-            WHERE o.created_at::date BETWEEN $1::date AND $2:: date
+            WHERE (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY c.id, c.name
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Product Analysis (NEW)
     const products = await db.all(`
             SELECT menu_item_name as name, SUM(quantity) as volume, SUM(oi.subtotal) as revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
-            WHERE o.created_at::date BETWEEN $1::date AND $2:: date
+            WHERE (o.created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
             AND o.status = 'completed'
             GROUP BY menu_item_name
             ORDER BY revenue DESC
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
 
     // Void Orders - Check if column exists first or try/catch individual query if worried
     let voids = [];
@@ -193,9 +189,9 @@ COUNT(*) as total_orders,
       voids = await db.all(`
             SELECT order_number, customer_name, total, notes as void_reason, created_at
             FROM orders
-            WHERE created_at::date BETWEEN $1::date AND $2:: date 
+            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
             AND status = 'cancelled'
-  `, [s, e]);
+  `, [s, e, 'Asia/Jakarta']);
     } catch (e) {
       console.error("Void query failed", e.message);
     }
@@ -248,15 +244,15 @@ router.get('/breakdown/:type', async (req, res) => {
   try {
     const data = await db.all(`
 SELECT
-to_char(created_at, $1) as label,
+to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE $4, $1) as label,
   COUNT(*) as orders,
   SUM(total) as revenue
             FROM orders
-            WHERE created_at::date BETWEEN $2::date AND $3:: date 
+            WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE $4)::date BETWEEN $2::date AND $3:: date 
             AND status = 'completed'
             GROUP BY 1
             ORDER BY 1 ASC
-  `, [format, s, (end || s)]);
+  `, [format, s, (end || s), 'Asia/Jakarta']);
 
     res.json({ data });
   } catch (err) { res.status(500).json({ error: err.message }); }
