@@ -311,8 +311,8 @@ router.get('/stats/today', async (req, res) => {
         // Basic Stats
         const basicStats = await db.get(`
             SELECT 
-                COUNT(*) as total_orders, 
-                COALESCE(SUM(total), 0) as total_sales,
+                COUNT(id) as total_orders, 
+                COALESCE(SUM(total), 0) as total_revenue,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
             WHERE status = 'completed' 
@@ -321,7 +321,7 @@ router.get('/stats/today', async (req, res) => {
 
         // Payment Breakdown (Cash, QRIS)
         const paymentStats = await db.all(`
-            SELECT payment_method, COUNT(*) as count, COALESCE(SUM(total), 0) as total
+            SELECT payment_method, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
             WHERE status = 'completed' AND created_at::date = $1::date
             GROUP BY payment_method
@@ -329,7 +329,7 @@ router.get('/stats/today', async (req, res) => {
 
         // Order Type Breakdown (Dine-in, Takeaway, etc)
         const typeStats = await db.all(`
-            SELECT order_type, COUNT(*) as count, COALESCE(SUM(total), 0) as total
+            SELECT order_type, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
             WHERE status = 'completed' AND created_at::date = $1::date
             GROUP BY order_type
@@ -337,20 +337,37 @@ router.get('/stats/today', async (req, res) => {
 
         // Top Selling Items today
         const topItems = await db.all(`
-            SELECT order_items.menu_item_name as name, SUM(order_items.quantity) as qty, SUM(order_items.subtotal) as total
-            FROM order_items 
-            JOIN orders ON order_items.order_id = orders.id
-            WHERE orders.status = 'completed' AND orders.created_at::date = $1::date
-            GROUP BY order_items.menu_item_name
-            ORDER BY qty DESC
+            SELECT 
+                oi.menu_item_name as item_name, 
+                SUM(oi.quantity) as total_qty, 
+                SUM(oi.subtotal) as total_revenue
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            WHERE o.status = 'completed' AND o.created_at::date = $1::date
+            GROUP BY oi.menu_item_name
+            ORDER BY total_qty DESC
             LIMIT 5
         `, [todayStr]);
 
         res.json({
-            ...basicStats,
-            payment_breakdown: paymentStats,
-            type_breakdown: typeStats,
-            top_items: topItems
+            total_orders: basicStats.total_orders,
+            total_sales: basicStats.total_revenue,
+            total_cogs: basicStats.total_cogs,
+            payment_breakdown: paymentStats.map(s => ({
+                payment_method: s.payment_method,
+                count: parseInt(s.count),
+                total: parseFloat(s.total_amount)
+            })),
+            type_breakdown: typeStats.map(s => ({
+                order_type: s.order_type,
+                count: parseInt(s.count),
+                total: parseFloat(s.total_amount)
+            })),
+            top_items: topItems.map(s => ({
+                name: s.item_name,
+                qty: parseInt(s.total_qty),
+                total: parseFloat(s.total_revenue)
+            }))
         });
     } catch (err) {
         console.error("[STATS ERROR]", err);
