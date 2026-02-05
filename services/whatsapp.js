@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Token Fonnte (Hardcoded sesuai request user untuk memastikan jalan)
-const FONNTE_TOKEN = process.env.FONNTE_TOKEN || 'UUqCy6MARPx9jPpaMsAT';
+const FONNTE_TOKEN = process.env.FONNTE_TOKEN || 'qcfyPyU2CUGh8TyGp28g';
 
 const formatIDR = (num) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num);

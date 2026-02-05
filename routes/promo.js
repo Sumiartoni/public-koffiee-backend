@@ -48,11 +48,18 @@ router.post('/promotions', async (req, res) => {
     const { name, type, buy_item_id, get_item_id, buy_qty, get_qty, discount_percent, min_spend, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-        const result = await db.run(`
+
+        let sql = `
             INSERT INTO promotions (name, type, buy_item_id, get_item_id, buy_qty, get_qty, discount_percent, min_spend, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING id
-        `, [
+        `;
+
+        // Postgres needs RETURNING id to get the ID, SQLite uses lastId
+        if (db.type === 'postgres') {
+            sql += ' RETURNING id';
+        }
+
+        const result = await db.run(sql, [
             name, type, buy_item_id || null, get_item_id || null,
             Number(buy_qty) || 0, Number(get_qty) || 0, Number(discount_percent) || 0, Number(min_spend) || 0,
             isActiveVal
@@ -114,11 +121,19 @@ router.post('/discounts', async (req, res) => {
     const { name, code, type, value, min_purchase, max_discount, is_active } = req.body;
     try {
         const isActiveVal = (is_active === 'true' || is_active === '1' || is_active === 1 || is_active === true) ? 1 : 0;
-        const result = await db.run(`
+
+        let sql = `
             INSERT INTO discounts (name, code, type, value, min_purchase, max_discount, is_active)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id
-        `, [name, code, type, Number(value), Number(min_purchase) || 0, Number(max_discount) || null, isActiveVal]);
+        `;
+
+        if (db.type === 'postgres') {
+            sql += ' RETURNING id';
+        }
+
+        const result = await db.run(sql, [
+            name, code, type, Number(value), Number(min_purchase) || 0, Number(max_discount) || null, isActiveVal
+        ]);
         const id = (result.rows && result.rows[0]) ? result.rows[0].id : result.lastId;
         res.status(201).json({ id, message: 'Diskon berhasil dibuat' });
     } catch (err) {
