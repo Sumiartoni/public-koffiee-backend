@@ -20,6 +20,7 @@ import receiptRoutes from './routes/receipt.js';
 import promoRoutes from './routes/promo.js';
 import extraRoutes from './routes/extra.js';
 import paymentRoutes from './routes/payment.js';
+import { startAutoCancelScheduler } from './autoCancelOrders.js';
 
 dotenv.config();
 
@@ -216,6 +217,9 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   🔌 Socket.IO : Enabled
   📊 Database  : ${db.type.toUpperCase()}
   `);
+
+  // Start auto-cancel scheduler for old unconfirmed orders  
+  startAutoCancelScheduler();
 });
 
 export { io };

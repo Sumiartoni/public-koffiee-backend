@@ -5,6 +5,194 @@ import { processQrisPayment } from '../services/payment/index.js';
 
 const router = express.Router();
 
+// ============================================
+// SECURITY: Validation Utilities
+// ============================================
+
+/**
+ * Validate customer name - prevent spaces-only, too short, or suspicious patterns
+ */
+function validateCustomerName(name) {
+    if (!name || typeof name !== 'string') {
+        return { valid: false, error: 'Nama customer harus diisi' };
+    }
+
+    const trimmed = name.trim();
+
+    // Check if only spaces or empty
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Nama tidak boleh hanya spasi' };
+    }
+
+    // Minimum 3 characters
+    if (trimmed.length < 3) {
+        return { valid: false, error: 'Nama minimal 3 karakter' };
+    }
+
+    // Check if only numbers
+    if (/^\d+$/.test(trimmed)) {
+        return { valid: false, error: 'Nama tidak boleh hanya angka' };
+    }
+
+    // Check for suspicious repeated characters (e.g., "aaaa", "1111")
+    if (/(.)\1{4,}/.test(trimmed)) {
+        return { valid: false, error: 'Nama tidak valid' };
+    }
+
+    return { valid: true, value: trimmed };
+}
+
+/**
+ * Validate Indonesian phone number
+ */
+function validatePhoneNumber(phone) {
+    if (!phone || typeof phone !== 'string') {
+        return { valid: false, error: 'Nomor WhatsApp harus diisi' };
+    }
+
+    const trimmed = phone.trim();
+
+    // Check if only spaces
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Nomor WhatsApp tidak boleh hanya spasi' };
+    }
+
+    // Remove all non-digits
+    const digitsOnly = trimmed.replace(/\D/g, '');
+
+    // Check minimum length (Indonesian: 10-13 digits)
+    if (digitsOnly.length < 10) {
+        return { valid: false, error: 'Nomor WhatsApp terlalu pendek (minimal 10 digit)' };
+    }
+
+    if (digitsOnly.length > 13) {
+        return { valid: false, error: 'Nomor WhatsApp terlalu panjang (maksimal 13 digit)' };
+    }
+
+    // Must start with 08, 628, or +628
+    const validPrefixes = ['08', '628', '+628'];
+    const hasValidPrefix = validPrefixes.some(prefix => trimmed.startsWith(prefix));
+
+    if (!hasValidPrefix) {
+        return { valid: false, error: 'Nomor WhatsApp harus dimulai dengan 08 atau 628' };
+    }
+
+    return { valid: true, value: digitsOnly };
+}
+
+/**
+ * Validate address for delivery orders
+ */
+function validateAddress(address, orderType) {
+    // Only validate for delivery orders
+    if (orderType !== 'delivery') {
+        return { valid: true, value: address || '' };
+    }
+
+    if (!address || typeof address !== 'string') {
+        return { valid: false, error: 'Alamat pengiriman harus diisi' };
+    }
+
+    const trimmed = address.trim();
+
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Alamat tidak boleh hanya spasi' };
+    }
+
+    // Minimum 10 characters for delivery address
+    if (trimmed.length < 10) {
+        return { valid: false, error: 'Alamat terlalu pendek (minimal 10 karakter)' };
+    }
+
+    return { valid: true, value: trimmed };
+}
+
+/**
+ * Detect suspicious order patterns
+ */
+function detectSuspiciousPatterns(name, phone, address) {
+    const flags = [];
+
+    // Name same as phone number
+    if (name.replace(/\D/g, '') === phone.replace(/\D/g, '')) {
+        flags.push('name_same_as_phone');
+    }
+
+    // Very short address for delivery
+    if (address && address.length < 15) {
+        flags.push('short_address');
+    }
+
+    // Excessive special characters
+    if (/[!@#$%^&*()]{3,}/.test(name)) {
+        flags.push('excessive_special_chars');
+    }
+
+    return flags;
+}
+
+// ============================================
+// SECURITY: Rate Limiting
+// ============================================
+
+// Simple in-memory rate limiter (for production, use Redis)
+const orderRateLimiter = {
+    requests: new Map(), // IP -> [{timestamp, count}]
+
+    // Configuration
+    windowMs: 10 * 60 * 1000, // 10 minutes
+    maxRequests: 3, // Max 3 orders per window
+
+    check(ip) {
+        const now = Date.now();
+
+        // Get existing requests for this IP
+        if (!this.requests.has(ip)) {
+            this.requests.set(ip, []);
+        }
+
+        const ipRequests = this.requests.get(ip);
+
+        // Remove old requests outside the time window
+        const validRequests = ipRequests.filter(req => (now - req) < this.windowMs);
+        this.requests.set(ip, validRequests);
+
+        // Check if limit exceeded
+        if (validRequests.length >= this.maxRequests) {
+            return {
+                allowed: false,
+                remaining: 0,
+                resetIn: Math.ceil((validRequests[0] + this.windowMs - now) / 1000) // seconds
+            };
+        }
+
+        // Add current request
+        validRequests.push(now);
+        this.requests.set(ip, validRequests);
+
+        return {
+            allowed: true,
+            remaining: this.maxRequests - validRequests.length
+        };
+    },
+
+    // Clean up old entries periodically
+    cleanup() {
+        const now = Date.now();
+        for (const [ip, requests] of this.requests.entries()) {
+            const validRequests = requests.filter(req => (now - req) < this.windowMs);
+            if (validRequests.length === 0) {
+                this.requests.delete(ip);
+            } else {
+                this.requests.set(ip, validRequests);
+            }
+        }
+    }
+};
+
+// Cleanup rate limiter every 5 minutes
+setInterval(() => orderRateLimiter.cleanup(), 5 * 60 * 1000);
+
 // Generate Order Number: ORD-YYYYMMDD-XXXX
 async function generateOrderNumber() {
     try {
@@ -36,6 +224,60 @@ router.post('/', async (req, res) => {
 
     console.log(`\n--- NEW ORDER ATTEMPT ---`);
     console.log(`Cust: ${customer_name}, Type: ${order_type}, Items: ${items?.length}`);
+
+    // ============================================
+    // SECURITY: Rate Limiting Check
+    // ============================================
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
+    const rateLimitResult = orderRateLimiter.check(clientIp);
+
+    if (!rateLimitResult.allowed) {
+        console.warn(`[RATE LIMIT] Order blocked from IP: ${clientIp}`);
+        return res.status(429).json({
+            error: 'Terlalu banyak pesanan dalam waktu singkat',
+            detail: `Silakan tunggu ${Math.ceil(rateLimitResult.resetIn / 60)} menit sebelum memesan lagi`,
+            resetIn: rateLimitResult.resetIn
+        });
+    }
+
+    console.log(`[RATE LIMIT] IP: ${clientIp}, Remaining: ${rateLimitResult.remaining}`);
+
+    // ============================================
+    // SECURITY: Input Validation
+    // ============================================
+
+    // Validate customer name
+    const nameValidation = validateCustomerName(customer_name);
+    if (!nameValidation.valid) {
+        console.warn(`[VALIDATION] Name rejected: "${customer_name}"`);
+        return res.status(400).json({ error: nameValidation.error });
+    }
+
+    // Validate phone number
+    const phoneValidation = validatePhoneNumber(customer_phone);
+    if (!phoneValidation.valid) {
+        console.warn(`[VALIDATION] Phone rejected: "${customer_phone}"`);
+        return res.status(400).json({ error: phoneValidation.error });
+    }
+
+    // Validate address (if delivery)
+    const addressValidation = validateAddress(address, order_type);
+    if (!addressValidation.valid) {
+        console.warn(`[VALIDATION] Address rejected for ${order_type}: "${address}"`);
+        return res.status(400).json({ error: addressValidation.error });
+    }
+
+    // Detect suspicious patterns
+    const suspiciousFlags = detectSuspiciousPatterns(
+        nameValidation.value,
+        phoneValidation.value,
+        addressValidation.value
+    );
+
+    if (suspiciousFlags.length > 0) {
+        console.warn(`[SUSPICIOUS ORDER] Flags: ${suspiciousFlags.join(', ')} | Name: ${customer_name} | Phone: ${customer_phone}`);
+        // Continue but mark as suspicious for admin review
+    }
 
     if (!items || items.length === 0) {
         return res.status(400).json({ error: 'Keranjang kosong' });
@@ -139,9 +381,9 @@ router.post('/', async (req, res) => {
 
         const result = await db.run(insertSql, [
             orderNumber,
-            String(customer_name || 'Walk-in Customer'),
-            String(customer_phone || ''),
-            String(address || ''),
+            nameValidation.value, // Use validated/trimmed name
+            phoneValidation.value, // Use validated/cleaned phone
+            addressValidation.value, // Use validated/trimmed address
             String(order_type || 'online'),
             String(table_number || '-'),
             String(payment_method || 'cash'),
