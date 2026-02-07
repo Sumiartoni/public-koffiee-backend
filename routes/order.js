@@ -434,8 +434,8 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Send WhatsApp Notification (Skip if Pending - will be sent when completed)
-        if (customer_phone && fullOrder.status !== 'pending') {
+        // Send WhatsApp Notification (Skip only for UNPAID QRIS orders - will be sent when payment confirmed)
+        if (customer_phone && fullOrder.status !== 'unpaid') {
             const typeLower = (order_type || '').toLowerCase();
             let waMsg = '';
 
