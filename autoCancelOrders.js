@@ -13,7 +13,20 @@ export async function autoCancelOldOrders() {
         // Calculate 1 hour ago timestamp
         const oneHourAgo = new Date();
         oneHourAgo.setHours(oneHourAgo.getHours() - 1);
-        const oneHourAgoStr = oneHourAgo.toISOString();
+
+        // Format to Local Time string 'YYYY-MM-DD HH:MM:SS' to match SQLite/DB default
+        // because DB stores created_at as Local Time (CURRENT_TIMESTAMP in SQLite default often follows system time or needs explicit handling, 
+        // but our data shows '2026-01-27 16:45:31' which is local).
+        const year = oneHourAgo.getFullYear();
+        const month = String(oneHourAgo.getMonth() + 1).padStart(2, '0');
+        const day = String(oneHourAgo.getDate()).padStart(2, '0');
+        const hours = String(oneHourAgo.getHours()).padStart(2, '0');
+        const minutes = String(oneHourAgo.getMinutes()).padStart(2, '0');
+        const seconds = String(oneHourAgo.getSeconds()).padStart(2, '0');
+
+        const limitStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+
+        console.log(`[AUTO-CANCEL] Cancel limit timestamp: ${limitStr} (Local Time)`);
 
         // Find orders that are pending/unpaid and older than 1 hour
         const oldOrders = await db.all(`
@@ -22,7 +35,7 @@ export async function autoCancelOldOrders() {
             WHERE (status = 'pending' OR status = 'unpaid')
             AND created_at < $1
             ORDER BY created_at ASC
-        `, [oneHourAgoStr]);
+        `, [limitStr]);
 
         if (oldOrders.length === 0) {
             console.log('[AUTO-CANCEL] No old orders found');
