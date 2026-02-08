@@ -70,7 +70,16 @@ export const formatNewOrder = (order) => {
     // Skenario: Pembayaran QRIS (Belum Lunas) -> Minta Bayar
     if (isQris && order.payment_status === 'unpaid') {
         title = "💳 MENUNGGU PEMBAYARAN";
-        instruction = `Silakan selesaikan pembayaran Scan QRIS agar pesanan otomatis diproses.`;
+        let action = "agar pesanan dapat segera diproses.";
+        if (type.includes('delivery')) {
+            action = "agar pesanan dapat segera diproses dan dikirim ke:\n📍 " + (order.customer_address || '-');
+        } else if (type.includes('pickup')) {
+            action = "agar pesanan dapat segera disiapkan untuk diambil.";
+        }
+
+        // MOVED TO TOP (SUBHEADER) as per request
+        subHeader = `⚠️ *MOHON SEGERA BAYAR*\n\nSilakan lakukan pembayaran via Scan QRIS ${action}`;
+        instruction = "Setelah pembayaran berhasil, Anda akan menerima notifikasi konfirmasi otomatis.";
     }
 
     // Format List Menu Lebih Cantik

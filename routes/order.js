@@ -1,6 +1,6 @@
 import express from 'express';
 import db from '../db.js';
-import { sendWhatsApp, formatNewOrder, formatOrderReady, formatWalkInReceipt } from '../services/whatsapp.js';
+import { sendWhatsApp, formatNewOrder, formatOrderReady, formatWalkInReceipt, formatPaymentSuccess } from '../services/whatsapp.js';
 import { processQrisPayment } from '../services/payment/index.js';
 
 const router = express.Router();
@@ -443,8 +443,8 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Send WhatsApp Notification (Skip only for UNPAID QRIS orders - will be sent when payment confirmed)
-        if (customer_phone && fullOrder.status !== 'unpaid') {
+        // Send WhatsApp Notification (Send for ALL orders, including UNPAID QRIS)
+        if (customer_phone) {
             const typeLower = (order_type || '').toLowerCase();
             let waMsg = '';
 
@@ -511,16 +511,25 @@ router.patch('/:id/status', async (req, res) => {
         const io = req.app.get('io');
         if (io) io.emit('order-updated', { id: orderId, status });
 
-        // NOTIFIKASI KEDUA (Khusus Pickup -> Ready)
+        // NOTIFIKASI KEDUA (Setelah Bayar / Completed)
         if (status === 'completed' && order) {
             const type = (order.order_type || '').toLowerCase();
-            if (type.includes('pickup') || type.includes('take')) {
+            const method = (order.payment_method || '').toLowerCase();
+
+            if (method === 'qris') {
+                // Khusus QRIS -> Notifikasi Pembayaran Sukses
+                if (order.customer_phone) {
+                    const msg = formatPaymentSuccess(order);
+                    await sendWhatsApp(order.customer_phone, msg); // Await to ensure sending
+                }
+            } else if (type.includes('pickup') || type.includes('take')) {
+                // Khusus Pickup -> Notifikasi Siap Diambil
                 if (order.customer_phone) {
                     const msg = formatOrderReady(order);
                     sendWhatsApp(order.customer_phone, msg);
                 }
             } else if (order.customer_phone) {
-                // Untuk Walk-in / Dine-in yang baru saja diselesaikan -> Kirim Struk
+                // Untuk Walk-in / Dine-in / Delivery Cash -> Kirim Struk Lunas
                 const msg = formatWalkInReceipt(order);
                 sendWhatsApp(order.customer_phone, msg);
             }
