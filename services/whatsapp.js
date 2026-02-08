@@ -77,7 +77,19 @@ export const formatNewOrder = (order) => {
     const itemsList = (order.items || []).map(item => {
         const totalHargaItem = item.price * item.quantity;
         let note = item.notes ? `\n   _${item.notes}_` : '';
-        return `• *${item.menu_item_name || item.name}* x${item.quantity}\n   Rp ${new Intl.NumberFormat('id-ID').format(totalHargaItem)}${note}`;
+
+        // Parse Extras
+        let extrasStr = '';
+        try {
+            if (item.extras) {
+                const parsed = typeof item.extras === 'string' ? JSON.parse(item.extras) : item.extras;
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    extrasStr = '\n   + ' + parsed.map(e => e.name).join(', ');
+                }
+            }
+        } catch (e) { }
+
+        return `• *${item.menu_item_name || item.name}* x${item.quantity}\n   Rp ${new Intl.NumberFormat('id-ID').format(totalHargaItem)}${extrasStr}${note}`;
     }).join('\n');
 
 
@@ -144,9 +156,19 @@ _Public Koffiee_
 // Ektra: Struk
 // ==========================================
 export const formatWalkInReceipt = (order) => {
-    const itemsList = (order.items || []).map(item =>
-        `• ${item.menu_item_name || item.name} x${item.quantity} (${formatIDR(item.price * item.quantity)})`
-    ).join('\n');
+    const itemsList = (order.items || []).map(item => {
+        let extrasStr = '';
+        try {
+            if (item.extras) {
+                const parsed = typeof item.extras === 'string' ? JSON.parse(item.extras) : item.extras;
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    extrasStr = ' (+ ' + parsed.map(e => e.name).join(', ') + ')';
+                }
+            }
+        } catch (e) { }
+
+        return `• ${item.menu_item_name || item.name} x${item.quantity}${extrasStr} (${formatIDR(item.price * item.quantity)})`;
+    }).join('\n');
 
     return `
 *🧾 STRUK DIGITAL - PUBLIC KOFFIEE*
