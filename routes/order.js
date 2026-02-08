@@ -514,22 +514,16 @@ router.patch('/:id/status', async (req, res) => {
         // NOTIFIKASI KEDUA (Setelah Bayar / Completed)
         if (status === 'completed' && order) {
             const type = (order.order_type || '').toLowerCase();
-            const method = (order.payment_method || '').toLowerCase();
 
-            if (method === 'qris') {
-                // Khusus QRIS -> Notifikasi Pembayaran Sukses
-                if (order.customer_phone) {
-                    const msg = formatPaymentSuccess(order);
-                    await sendWhatsApp(order.customer_phone, msg); // Await to ensure sending
-                }
-            } else if (type.includes('pickup') || type.includes('take')) {
-                // Khusus Pickup -> Notifikasi Siap Diambil
+            // Cek tipe pesanan untuk pesan yang sesuai
+            if (type.includes('pickup') || type.includes('take') || type.includes('delivery')) {
+                // Konfirmasi Pesanan Selesai (Siap Diambil / Dikirim)
                 if (order.customer_phone) {
                     const msg = formatOrderReady(order);
                     sendWhatsApp(order.customer_phone, msg);
                 }
             } else if (order.customer_phone) {
-                // Untuk Walk-in / Dine-in / Delivery Cash -> Kirim Struk Lunas
+                // Untuk Walk-in / Dine-in / Cash -> Kirim Struk Lunas
                 const msg = formatWalkInReceipt(order);
                 sendWhatsApp(order.customer_phone, msg);
             }

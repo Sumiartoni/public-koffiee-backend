@@ -147,14 +147,26 @@ _Public Koffiee_
 // ==========================================
 // 3. NOTIFIKASI PESANAN SIAP (KHUSUS PICKUP)
 // ==========================================
+// ==========================================
+// 3. NOTIFIKASI PESANAN SELESAI (PICKUP / DELIVERY)
+// ==========================================
 export const formatOrderReady = (order) => {
+    const type = (order.order_type || '').toLowerCase();
+
+    let title = "🔔 PESANAN SIAP DIAMBIL!";
+    let body = `Pesanan *${order.order_number}* (Pickup) sudah selesai disiapkan.\nSilakan ambil pesanan kakak di meja Pickup / Barista sekarang ya. 🏃💨`;
+
+    if (type.includes('delivery')) {
+        title = "🛵 PESANAN SEDANG DIANTAR!";
+        body = `Pesanan *${order.order_number}* (Delivery) sudah selesai diproses dan sedang dibawa kurir ke alamat tujuan.\n\nMohon pastikan nomor HP aktif ya! 📦`;
+    }
+
     return `
-*🔔 PESANAN SIAP DIAMBIL!*
+*${title}*
 
 Halo Kak *${order.customer_name}*,
 
-Pesanan *${order.order_number}* (Pickup) sudah selesai disiapkan.
-Silakan ambil pesanan kakak di meja Pickup / Barista sekarang ya. 🏃💨
+${body}
 
 Selamat menikmati! ☕
 _Public Koffiee_
