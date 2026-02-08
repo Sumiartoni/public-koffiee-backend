@@ -291,17 +291,23 @@ router.post('/', async (req, res) => {
 
         // Validate Items & Stock
         for (const item of items) {
+            // Use price from Flutter (already includes extras if selected)
             let price = Number(item.price) || 0;
+            let subtotalFromClient = Number(item.subtotal) || 0;
             let hpp = 0;
             let menuItemId = Number(item.menu_item_id);
             let menuItemName = item.name || item.menu_item_name || 'Item Hapus';
 
-            // Try to lookup from DB
+            // Try to lookup from DB for stock deduction and HPP
             const menuItem = await db.get('SELECT * FROM menu_items WHERE id = $1', [menuItemId]);
             if (menuItem) {
-                price = Number(menuItem.price);
                 hpp = Number(menuItem.hpp);
                 menuItemName = menuItem.name;
+
+                // ONLY use DB price if client didn't send one (fallback)
+                if (!item.price || Number(item.price) === 0) {
+                    price = Number(menuItem.price);
+                }
 
                 // Deduct Stock
                 try {
@@ -318,7 +324,10 @@ router.post('/', async (req, res) => {
             }
 
             const qty = Number(item.quantity) || 1;
-            const itemSubtotal = price * qty;
+
+            // Use subtotal from client if available (already calculated with extras in Flutter)
+            // Otherwise calculate from price * qty
+            const itemSubtotal = subtotalFromClient || (price * qty);
             const itemHpp = hpp * qty;
 
             subtotal += itemSubtotal;
