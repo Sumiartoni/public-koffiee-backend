@@ -254,11 +254,23 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: nameValidation.error });
     }
 
-    // Validate phone number
-    const phoneValidation = validatePhoneNumber(customer_phone);
-    if (!phoneValidation.valid) {
-        console.warn(`[VALIDATION] Phone rejected: "${customer_phone}"`);
-        return res.status(400).json({ error: phoneValidation.error });
+    // Validate phone number (strict for online orders, relaxed for POS/walk-in)
+    const isPosOrder = ['dine-in', 'takeaway'].includes(String(order_type || '').toLowerCase());
+    let validatedPhone = (customer_phone || '').trim();
+    if (isPosOrder) {
+        // POS orders: just ensure phone is not empty
+        if (!customer_phone || customer_phone.trim().length === 0) {
+            console.warn(`[VALIDATION] Phone empty for POS order`);
+            return res.status(400).json({ error: 'Nomor HP harus diisi' });
+        }
+    } else {
+        // Online/delivery/pickup: strict validation
+        const phoneValidation = validatePhoneNumber(customer_phone);
+        if (!phoneValidation.valid) {
+            console.warn(`[VALIDATION] Phone rejected: "${customer_phone}"`);
+            return res.status(400).json({ error: phoneValidation.error });
+        }
+        validatedPhone = phoneValidation.value;
     }
 
     // Validate address (if delivery)
@@ -271,7 +283,7 @@ router.post('/', async (req, res) => {
     // Detect suspicious patterns
     const suspiciousFlags = detectSuspiciousPatterns(
         nameValidation.value,
-        phoneValidation.value,
+        validatedPhone,
         addressValidation.value
     );
 
@@ -428,7 +440,7 @@ router.post('/', async (req, res) => {
         const result = await db.run(insertSql, [
             orderNumber,
             nameValidation.value,
-            phoneValidation.value,
+            validatedPhone,
             addressValidation.value,
             String(order_type || 'online'),
             String(table_number || '-'),
