@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
     try {
         const vouchers = await db.query('SELECT * FROM customer_vouchers ORDER BY created_at DESC');
-        res.json(vouchers);
+        res.json(vouchers.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -25,7 +25,7 @@ router.post('/', async (req, res) => {
        RETURNING *`,
             [title, description, category, type, value, max_discount || null, min_purchase || 0, quota || null, validity_days || 0, start_date || null, end_date || null]
         );
-        res.status(201).json(result[0]);
+        res.status(201).json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -44,7 +44,7 @@ router.put('/:id', async (req, res) => {
        RETURNING *`,
             [title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date, is_active, id]
         );
-        res.json(result[0]);
+        res.json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

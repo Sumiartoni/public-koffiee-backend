@@ -19,7 +19,7 @@ router.get('/stats', async (req, res) => {
             ORDER BY total_referrals DESC
         `;
         const result = await db.query(query);
-        res.json(result);
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -36,7 +36,7 @@ router.get('/:userId/details', async (req, res) => {
             ORDER BY created_at DESC
         `;
         const result = await db.query(query, [userId]);
-        res.json(result);
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

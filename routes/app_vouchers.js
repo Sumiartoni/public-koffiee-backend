@@ -27,7 +27,7 @@ router.get('/', async (req, res) => {
         }
 
         const result = await db.query(query, params);
-        res.json(result);
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -39,20 +39,20 @@ router.post('/claim', async (req, res) => {
 
     try {
         // Check voucher validity & quota
-        const voucher = (await db.query('SELECT * FROM customer_vouchers WHERE id = $1 AND is_active = TRUE', [voucher_id]))[0];
+        const voucher = (await db.query('SELECT * FROM customer_vouchers WHERE id = $1 AND is_active = TRUE', [voucher_id])).rows[0];
         if (!voucher) return res.status(404).json({ error: 'Voucher not found or inactive' });
 
         if (voucher.quota !== null) {
-            const claimedCount = (await db.query('SELECT COUNT(*) as count FROM user_vouchers WHERE voucher_id = $1', [voucher_id]))[0].count;
+            const claimedCount = (await db.query('SELECT COUNT(*) as count FROM user_vouchers WHERE voucher_id = $1', [voucher_id])).rows[0].count;
             if (claimedCount >= voucher.quota) return res.status(400).json({ error: 'Quota exceeded' });
         }
 
         // Check if already claimed
         let existingClaim;
         if (user_id) {
-            existingClaim = (await db.query('SELECT * FROM user_vouchers WHERE voucher_id = $1 AND user_id = $2', [voucher_id, user_id]))[0];
+            existingClaim = (await db.query('SELECT * FROM user_vouchers WHERE voucher_id = $1 AND user_id = $2', [voucher_id, user_id])).rows[0];
         } else if (device_id) {
-            existingClaim = (await db.query('SELECT * FROM user_vouchers WHERE voucher_id = $1 AND device_id = $2', [voucher_id, device_id]))[0];
+            existingClaim = (await db.query('SELECT * FROM user_vouchers WHERE voucher_id = $1 AND device_id = $2', [voucher_id, device_id])).rows[0];
         }
 
         if (existingClaim) return res.status(400).json({ error: 'Voucher already claimed' });
@@ -76,8 +76,8 @@ router.get('/referral', async (req, res) => {
     if (!user_id) return res.status(400).json({ error: 'User ID required' });
 
     try {
-        const user = (await db.query('SELECT referral_code FROM users WHERE id = $1', [user_id]))[0];
-        const referrals = (await db.query('SELECT COUNT(*) as total FROM users WHERE referred_by = (SELECT referral_code FROM users WHERE id = $1)', [user_id]))[0];
+        const user = (await db.query('SELECT referral_code FROM users WHERE id = $1', [user_id])).rows[0];
+        const referrals = (await db.query('SELECT COUNT(*) as total FROM users WHERE referred_by = (SELECT referral_code FROM users WHERE id = $1)', [user_id])).rows[0];
 
         res.json({
             referral_code: user?.referral_code || 'Belum Ada Code',
