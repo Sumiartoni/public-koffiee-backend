@@ -21,6 +21,9 @@ import promoRoutes from './routes/promo.js';
 import extraRoutes from './routes/extra.js';
 import paymentRoutes from './routes/payment.js';
 import deliveryRoutes from './routes/delivery.js';
+import customerVoucherRoutes from './routes/customer_vouchers.js';
+import appVoucherRoutes from './routes/app_vouchers.js';
+import referralRoutes from './routes/referrals.js';
 import { startAutoCancelScheduler } from './autoCancelOrders.js';
 
 dotenv.config();
@@ -144,6 +147,9 @@ app.use('/api/promos', promoRoutes);
 app.use('/api/extras', extraRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/delivery', deliveryRoutes);
+app.use('/api/customer-vouchers', customerVoucherRoutes);
+app.use('/api/app/vouchers', appVoucherRoutes); // For customer app
+app.use('/api/referrals', referralRoutes); // For backoffice stats
 
 // QRIS image endpoint
 app.get('/api/qris/image', (req, res) => {
