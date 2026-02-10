@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { sendWhatsApp, formatNewOrder, formatOrderReady, formatWalkInReceipt, formatPaymentSuccess } from '../services/whatsapp.js';
 import { processQrisPayment } from '../services/payment/index.js';
+import { haversineDistance, calculateDeliveryFee, getDeliverySettings } from './delivery.js';
 
 const router = express.Router();
 
@@ -220,7 +221,7 @@ async function generateOrderNumber() {
 
 // POST: CREATE NEW ORDER
 router.post('/', async (req, res) => {
-    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone } = req.body;
+    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone, customer_lat, customer_lng } = req.body;
 
     console.log(`\n--- NEW ORDER ATTEMPT ---`);
     console.log(`Cust: ${customer_name}, Type: ${order_type}, Items: ${items?.length}`);
@@ -346,7 +347,42 @@ router.post('/', async (req, res) => {
         }
 
         const tax = 0;
-        const total = subtotal - (Number(discount) || 0);
+
+        // ============================================
+        // DELIVERY FEE CALCULATION (Haversine)
+        // ============================================
+        let deliveryFee = 0;
+        let deliveryDistanceKm = null;
+        let custLat = customer_lat ? parseFloat(customer_lat) : null;
+        let custLng = customer_lng ? parseFloat(customer_lng) : null;
+
+        const typeLowerCheck = String(order_type || '').toLowerCase();
+        if (typeLowerCheck === 'delivery' && custLat && custLng) {
+            try {
+                const deliverySettings = await getDeliverySettings();
+                if (deliverySettings.store_lat && deliverySettings.store_lng) {
+                    const storeLat = parseFloat(deliverySettings.store_lat);
+                    const storeLng = parseFloat(deliverySettings.store_lng);
+                    const distance = haversineDistance(storeLat, storeLng, custLat, custLng);
+                    const feeResult = calculateDeliveryFee(distance, deliverySettings);
+
+                    if (feeResult.fee === -1) {
+                        return res.status(400).json({
+                            error: feeResult.breakdown.message,
+                            distance_km: feeResult.breakdown.distance_km
+                        });
+                    }
+
+                    deliveryFee = feeResult.fee;
+                    deliveryDistanceKm = feeResult.breakdown.distance_km;
+                    console.log(`[DELIVERY] Distance: ${deliveryDistanceKm} km, Fee: Rp ${deliveryFee}`);
+                }
+            } catch (delErr) {
+                console.error('[DELIVERY CALC ERROR]', delErr.message);
+            }
+        }
+
+        const total = subtotal - (Number(discount) || 0) + deliveryFee;
 
         // LOGIC STATUS:
         // Default: 'unpaid' (Safety default)
@@ -383,16 +419,17 @@ router.post('/', async (req, res) => {
             INSERT INTO orders (
                 order_number, customer_name, customer_phone, customer_address, 
                 order_type, table_number, payment_method, payment_status, status, 
-                subtotal, tax, discount, total, total_hpp, notes
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                subtotal, tax, discount, delivery_fee, delivery_distance_km,
+                customer_lat, customer_lng, total, total_hpp, notes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING id
         `;
 
         const result = await db.run(insertSql, [
             orderNumber,
-            nameValidation.value, // Use validated/trimmed name
-            phoneValidation.value, // Use validated/cleaned phone
-            addressValidation.value, // Use validated/trimmed address
+            nameValidation.value,
+            phoneValidation.value,
+            addressValidation.value,
             String(order_type || 'online'),
             String(table_number || '-'),
             String(payment_method || 'cash'),
@@ -401,6 +438,10 @@ router.post('/', async (req, res) => {
             Math.round(subtotal),
             Math.round(tax),
             Math.round(Number(discount) || 0),
+            Math.round(deliveryFee),
+            deliveryDistanceKm,
+            custLat,
+            custLng,
             Math.round(total),
             Math.round(totalHpp),
             String(notes || '')

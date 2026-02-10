@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS orders (
   subtotal INTEGER NOT NULL,
   tax INTEGER NOT NULL,
   discount INTEGER DEFAULT 0,
+  delivery_fee INTEGER DEFAULT 0,
+  delivery_distance_km DOUBLE PRECISION,
+  customer_lat DOUBLE PRECISION,
+  customer_lng DOUBLE PRECISION,
   total INTEGER NOT NULL,
   total_hpp INTEGER DEFAULT 0,
   notes TEXT,
@@ -245,3 +249,13 @@ INSERT INTO expense_categories (name, emoji) VALUES
   ('Perbaikan & Maintenance', '🛠️'),
   ('Lain-lain', '📝')
 ON CONFLICT DO NOTHING;
+
+-- Delivery Settings (Haversine)
+INSERT INTO settings (key, value) VALUES
+  ('store_lat', '-6.2088'),
+  ('store_lng', '106.8456'),
+  ('delivery_base_fee', '5000'),
+  ('delivery_per_km', '3000'),
+  ('delivery_max_km', '15'),
+  ('delivery_free_km', '1')
+ON CONFLICT (key) DO NOTHING;
