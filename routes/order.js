@@ -220,7 +220,7 @@ async function generateOrderNumber() {
 
 // POST: CREATE NEW ORDER
 router.post('/', async (req, res) => {
-    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone } = req.body;
+    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone, user_voucher_id, user_id } = req.body;
 
     console.log(`\n--- NEW ORDER ATTEMPT ---`);
     console.log(`Cust: ${customer_name}, Type: ${order_type}, Items: ${items?.length}`);
@@ -277,6 +277,29 @@ router.post('/', async (req, res) => {
     if (suspiciousFlags.length > 0) {
         console.warn(`[SUSPICIOUS ORDER] Flags: ${suspiciousFlags.join(', ')} | Name: ${customer_name} | Phone: ${customer_phone}`);
         // Continue but mark as suspicious for admin review
+    }
+
+    // ============================================
+    // VOUCHER VALIDATION
+    // ============================================
+    if (user_voucher_id) {
+        const voucher = await db.get('SELECT * FROM user_vouchers WHERE id = $1', [user_voucher_id]);
+
+        if (!voucher) {
+            return res.status(400).json({ error: 'Voucher tidak ditemukan' });
+        }
+
+        if (user_id && voucher.user_id && String(voucher.user_id) !== String(user_id)) {
+            return res.status(400).json({ error: 'Voucher tidak valid untuk user ini' });
+        }
+
+        if (voucher.is_used) {
+            return res.status(400).json({ error: 'Voucher sudah digunakan' });
+        }
+
+        if (voucher.expired_at && new Date(voucher.expired_at) < new Date()) {
+            return res.status(400).json({ error: 'Voucher sudah kadaluarsa' });
+        }
     }
 
     if (!items || items.length === 0) {
@@ -442,6 +465,12 @@ router.post('/', async (req, res) => {
                 // We'll proceed but paymentData will be null.
             }
         }
+
+        // Mark Voucher as Used
+        if (user_voucher_id) {
+            await db.run(`UPDATE user_vouchers SET is_used = TRUE, used_at = CURRENT_TIMESTAMP WHERE id = $1`, [user_voucher_id]);
+        }
+
 
         // Send WhatsApp Notification (Send for ALL orders, including UNPAID QRIS)
         if (customer_phone) {
