@@ -1,28 +1,29 @@
 import express from 'express';
 import db from '../db.js';
 import multer from 'multer';
-import { join, extname, dirname } from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const UPLOADS_DIR = join(__dirname, '..', 'uploads');
+import cloudinary from '../cloudinaryConfig.js';
 
 const router = express.Router();
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const bannerDir = join(UPLOADS_DIR, 'banners');
-        if (!fs.existsSync(bannerDir)) fs.mkdirSync(bannerDir, { recursive: true });
-        cb(null, bannerDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'banner-' + uniqueSuffix + extname(file.originalname));
-    }
+// Use memory storage for Cloudinary upload (no local file needed)
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB max
+
+// Helper: upload buffer to Cloudinary
+const uploadToCloudinary = (buffer, folder = 'banners') => {
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+            { folder: `public-koffiee/${folder}`, resource_type: 'image' },
+            (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+            }
+        );
+        stream.end(buffer);
+    });
+};
 
 // =============================================
 // PUBLIC: Get active banners
@@ -58,7 +59,16 @@ router.post('/', upload.single('image'), async (req, res) => {
 
     if (!title) return res.status(400).json({ error: 'Judul banner wajib diisi' });
 
-    const image_url = req.file ? `/uploads/banners/${req.file.filename}` : null;
+    let image_url = null;
+    if (req.file) {
+        try {
+            const result = await uploadToCloudinary(req.file.buffer);
+            image_url = result.secure_url;
+        } catch (err) {
+            console.error('[CLOUDINARY UPLOAD ERROR]', err.message);
+            return res.status(500).json({ error: 'Gagal upload gambar' });
+        }
+    }
 
     try {
         const result = await db.query(
@@ -78,17 +88,23 @@ router.put('/:id', upload.single('image'), async (req, res) => {
     const { title, link_type, link_value, sort_order, is_active } = req.body;
 
     try {
-        // Get current banner for old image cleanup
         const current = (await db.query('SELECT * FROM app_banners WHERE id = $1', [id])).rows[0];
         if (!current) return res.status(404).json({ error: 'Banner tidak ditemukan' });
 
         let image_url = current.image_url;
         if (req.file) {
-            image_url = `/uploads/banners/${req.file.filename}`;
-            // Delete old image
-            if (current.image_url) {
-                const oldPath = join(__dirname, '..', current.image_url);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            try {
+                // Delete old image from Cloudinary if exists
+                if (current.image_url && current.image_url.includes('cloudinary')) {
+                    const parts = current.image_url.split('/');
+                    const publicId = parts.slice(-2).join('/').replace(/\.[^.]+$/, '');
+                    await cloudinary.uploader.destroy(publicId).catch(() => { });
+                }
+                const result = await uploadToCloudinary(req.file.buffer);
+                image_url = result.secure_url;
+            } catch (err) {
+                console.error('[CLOUDINARY UPLOAD ERROR]', err.message);
+                return res.status(500).json({ error: 'Gagal upload gambar' });
             }
         }
 
@@ -109,9 +125,10 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     try {
         const banner = (await db.query('SELECT * FROM app_banners WHERE id = $1', [id])).rows[0];
-        if (banner && banner.image_url) {
-            const imgPath = join(__dirname, '..', banner.image_url);
-            if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+        if (banner && banner.image_url && banner.image_url.includes('cloudinary')) {
+            const parts = banner.image_url.split('/');
+            const publicId = parts.slice(-2).join('/').replace(/\.[^.]+$/, '');
+            await cloudinary.uploader.destroy(publicId).catch(() => { });
         }
         await db.query('DELETE FROM app_banners WHERE id = $1', [id]);
         res.json({ message: 'Banner deleted' });
