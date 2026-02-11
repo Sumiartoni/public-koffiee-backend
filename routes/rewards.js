@@ -4,57 +4,107 @@ import db from '../db.js';
 const router = express.Router();
 
 // =============================================
-// ADMIN: CRUD Reward Products
+// ADMIN: CRUD Reward Products (Multi-Product)
 // =============================================
 
-// GET all rewards (with product name)
+// GET all rewards with their products
 router.get('/', async (req, res) => {
     try {
-        const result = await db.query(`
-            SELECT rp.*, mi.name as product_name, mi.price as product_price, mi.image_url as product_image
-            FROM reward_products rp
-            LEFT JOIN menu_items mi ON rp.product_id = mi.id
-            ORDER BY rp.created_at DESC
-        `);
-        res.json(result.rows);
+        // Get rewards
+        const rewards = (await db.query(`
+            SELECT rp.* FROM reward_products rp ORDER BY rp.created_at DESC
+        `)).rows;
+
+        // Get product items for each reward
+        for (const reward of rewards) {
+            const products = (await db.query(`
+                SELECT rpi.product_id, mi.name as product_name, mi.price as product_price, mi.image_url as product_image
+                FROM reward_product_items rpi
+                JOIN menu_items mi ON rpi.product_id = mi.id
+                WHERE rpi.reward_id = $1
+            `, [reward.id])).rows;
+
+            reward.products = products;
+            reward.product_ids = products.map(p => p.product_id);
+
+            // Fallback: if no junction data but old product_id exists
+            if (products.length === 0 && reward.product_id) {
+                const oldProduct = (await db.query(
+                    'SELECT id, name, price, image_url FROM menu_items WHERE id = $1', [reward.product_id]
+                )).rows[0];
+                if (oldProduct) {
+                    reward.products = [{ product_id: oldProduct.id, product_name: oldProduct.name, product_price: oldProduct.price, product_image: oldProduct.image_url }];
+                    reward.product_ids = [oldProduct.id];
+                }
+            }
+        }
+
+        res.json(rewards);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// CREATE reward
+// CREATE reward with multiple products
 router.post('/', async (req, res) => {
-    const { title, product_id, points_required, referral_required, quota } = req.body;
+    const { title, product_ids, points_required, referral_required, quota } = req.body;
 
-    if (!title || !product_id) {
-        return res.status(400).json({ error: 'Title dan produk wajib diisi' });
+    if (!title) return res.status(400).json({ error: 'Title wajib diisi' });
+    if (!product_ids || !Array.isArray(product_ids) || product_ids.length === 0) {
+        return res.status(400).json({ error: 'Pilih minimal 1 produk' });
     }
 
     try {
+        // Insert reward (product_id = first for backward compat)
         const result = await db.query(
             `INSERT INTO reward_products (title, product_id, points_required, referral_required, quota)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [title, product_id, points_required || null, referral_required || null, quota || null]
+            [title, product_ids[0], points_required || null, referral_required || null, quota || null]
         );
-        res.status(201).json(result.rows[0]);
+        const reward = result.rows[0];
+
+        // Insert junction items
+        for (const pid of product_ids) {
+            await db.query(
+                'INSERT INTO reward_product_items (reward_id, product_id) VALUES ($1, $2)',
+                [reward.id, pid]
+            );
+        }
+
+        reward.product_ids = product_ids;
+        res.status(201).json(reward);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// UPDATE reward
+// UPDATE reward with multiple products
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    const { title, product_id, points_required, referral_required, quota, is_active } = req.body;
+    const { title, product_ids, points_required, referral_required, quota, is_active } = req.body;
 
     try {
         const result = await db.query(
             `UPDATE reward_products 
              SET title=$1, product_id=$2, points_required=$3, referral_required=$4, quota=$5, is_active=$6, updated_at=CURRENT_TIMESTAMP
              WHERE id=$7 RETURNING *`,
-            [title, product_id, points_required || null, referral_required || null, quota || null, is_active, id]
+            [title, product_ids?.[0] || null, points_required || null, referral_required || null, quota || null, is_active, id]
         );
-        res.json(result.rows[0]);
+
+        // Replace junction items
+        if (product_ids && Array.isArray(product_ids)) {
+            await db.query('DELETE FROM reward_product_items WHERE reward_id = $1', [id]);
+            for (const pid of product_ids) {
+                await db.query(
+                    'INSERT INTO reward_product_items (reward_id, product_id) VALUES ($1, $2)',
+                    [id, pid]
+                );
+            }
+        }
+
+        const reward = result.rows[0];
+        if (reward) reward.product_ids = product_ids;
+        res.json(reward);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -93,13 +143,11 @@ router.patch('/:id/toggle', async (req, res) => {
 router.get('/user/:userId/points', async (req, res) => {
     const { userId } = req.params;
     try {
-        // Total points
         const totalResult = await db.query(
             `SELECT COALESCE(SUM(CASE WHEN type='earn' THEN points ELSE -points END), 0) as total_points 
              FROM user_points WHERE user_id = $1`,
             [userId]
         );
-        // History
         const history = await db.query(
             'SELECT * FROM user_points WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
             [userId]
@@ -132,9 +180,9 @@ router.get('/user/:userId/rewards', async (req, res) => {
     }
 });
 
-// POST redeem points for reward
+// POST redeem points for reward (with product_id validation)
 router.post('/points/redeem', async (req, res) => {
-    const { user_id, reward_id } = req.body;
+    const { user_id, reward_id, product_id } = req.body;
 
     if (!user_id || !reward_id) {
         return res.status(400).json({ error: 'user_id dan reward_id wajib diisi' });
@@ -155,12 +203,24 @@ router.post('/points/redeem', async (req, res) => {
             return res.status(400).json({ error: 'Reward ini bukan untuk penukaran poin' });
         }
 
-        // 2. Check quota
+        // 2. Validate product_id if provided
+        if (product_id) {
+            const validProduct = (await db.query(
+                'SELECT * FROM reward_product_items WHERE reward_id = $1 AND product_id = $2',
+                [reward_id, product_id]
+            )).rows[0];
+
+            if (!validProduct) {
+                return res.status(400).json({ error: 'Produk tidak valid untuk reward ini' });
+            }
+        }
+
+        // 3. Check quota
         if (reward.quota !== null && reward.quota <= 0) {
             return res.status(400).json({ error: 'Kuota reward sudah habis' });
         }
 
-        // 3. Get user total points
+        // 4. Get user total points
         const totalResult = await db.query(
             `SELECT COALESCE(SUM(CASE WHEN type='earn' THEN points ELSE -points END), 0) as total_points 
              FROM user_points WHERE user_id = $1`,
@@ -174,19 +234,19 @@ router.post('/points/redeem', async (req, res) => {
             });
         }
 
-        // 4. Deduct points
+        // 5. Deduct points
         await db.query(
             `INSERT INTO user_points (user_id, points, type, description) VALUES ($1, $2, 'redeem', $3)`,
             [user_id, reward.points_required, `Tukar reward: ${reward.title}`]
         );
 
-        // 5. Give reward to user
+        // 6. Give reward to user
         await db.query(
             `INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)`,
             [user_id, reward_id]
         );
 
-        // 6. Reduce quota
+        // 7. Reduce quota
         if (reward.quota !== null) {
             await db.query(
                 'UPDATE reward_products SET quota = quota - 1 WHERE id = $1',
