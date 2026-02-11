@@ -44,6 +44,7 @@ router.get('/:userId/details', async (req, res) => {
 
 // POST /api/referrals/process
 // Dipanggil setelah order pertama user berhasil
+// Memberikan reward PRODUK (bukan voucher) berdasarkan milestone referral
 router.post('/process', async (req, res) => {
     const { user_id } = req.body;
 
@@ -70,7 +71,7 @@ router.post('/process', async (req, res) => {
             });
         }
 
-        // 3. Cari user referrer berdasarkan referral_code
+        // 3. Cari referrer berdasarkan referral_code
         const referrer = (await db.query(
             'SELECT * FROM users WHERE referral_code = $1',
             [user.referred_by]
@@ -83,7 +84,7 @@ router.post('/process', async (req, res) => {
             });
         }
 
-        // 4. Cek apakah reward sudah pernah diberikan
+        // 4. Cek apakah reward sudah pernah diberikan untuk pasangan ini
         const existingReward = (await db.query(
             'SELECT * FROM referral_rewards WHERE referrer_id = $1 AND referred_id = $2',
             [referrer.id, user_id]
@@ -96,70 +97,61 @@ router.post('/process', async (req, res) => {
             });
         }
 
-        // 5. Ambil voucher referral yang aktif dan masih ada quota
-        const voucher = (await db.query(
-            `SELECT * FROM customer_vouchers 
-             WHERE category = 'referral' 
-             AND is_active = TRUE 
-             AND (quota IS NULL OR quota > 0)
-             ORDER BY id ASC
-             LIMIT 1`
-        )).rows[0];
-
-        if (!voucher) {
-            console.log(`[REFERRAL] No active referral voucher available`);
-            return res.json({
-                success: false,
-                message: 'Tidak ada voucher referral yang tersedia'
-            });
-        }
-
-        // 6a. Berikan voucher ke referrer
+        // 5. Log referral dulu
         await db.query(
-            `INSERT INTO user_vouchers (user_id, voucher_id, is_used) VALUES ($1, $2, $3)`,
-            [referrer.id, voucher.id, false]
-        );
-
-        // 6b. Berikan voucher ke user baru
-        await db.query(
-            `INSERT INTO user_vouchers (user_id, voucher_id, is_used) VALUES ($1, $2, $3)`,
-            [user_id, voucher.id, false]
-        );
-
-        // 6c. Kurangi quota voucher 2x (untuk kedua pihak)
-        if (voucher.quota !== null) {
-            await db.query(
-                'UPDATE customer_vouchers SET quota = quota - 2 WHERE id = $1',
-                [voucher.id]
-            );
-        }
-
-        // 7. Simpan log referral
-        await db.query(
-            `INSERT INTO referral_rewards (referrer_id, referred_id, reward_given) 
-             VALUES ($1, $2, $3)`,
+            `INSERT INTO referral_rewards (referrer_id, referred_id, reward_given) VALUES ($1, $2, $3)`,
             [referrer.id, user_id, true]
         );
 
-        console.log(`[REFERRAL] Reward given: referrer=${referrer.name}(${referrer.id}), referred=${user.name}(${user_id}), voucher="${voucher.title}"`);
+        // 6. Hitung total referral milik referrer
+        const totalReferrals = (await db.query(
+            `SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1 AND reward_given = TRUE`,
+            [referrer.id]
+        )).rows[0].total;
+
+        // 7. Cek apakah ada reward produk untuk milestone ini
+        const reward = (await db.query(
+            `SELECT * FROM reward_products 
+             WHERE referral_required = $1 
+             AND is_active = TRUE 
+             AND (quota IS NULL OR quota > 0)
+             LIMIT 1`,
+            [parseInt(totalReferrals)]
+        )).rows[0];
+
+        let rewardGiven = null;
+
+        if (reward) {
+            // Berikan reward produk ke referrer
+            await db.query(
+                `INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)`,
+                [referrer.id, reward.id]
+            );
+
+            // Kurangi quota
+            if (reward.quota !== null) {
+                await db.query(
+                    'UPDATE reward_products SET quota = quota - 1 WHERE id = $1',
+                    [reward.id]
+                );
+            }
+
+            rewardGiven = {
+                reward_id: reward.id,
+                title: reward.title,
+                product_id: reward.product_id
+            };
+
+            console.log(`[REFERRAL] Milestone reward "${reward.title}" given to referrer ${referrer.name} (total referrals: ${totalReferrals})`);
+        }
+
+        console.log(`[REFERRAL] Processed: referrer=${referrer.name}(${referrer.id}), referred=${user.name}(${user_id}), total=${totalReferrals}`);
 
         return res.json({
             success: true,
-            message: 'Reward referral berhasil diberikan',
-            referrer_voucher: {
-                user_id: referrer.id,
-                voucher_id: voucher.id,
-                title: voucher.title,
-                type: voucher.type,
-                value: voucher.value
-            },
-            referred_voucher: {
-                user_id: user_id,
-                voucher_id: voucher.id,
-                title: voucher.title,
-                type: voucher.type,
-                value: voucher.value
-            }
+            message: 'Referral berhasil diproses',
+            total_referrals: parseInt(totalReferrals),
+            reward: rewardGiven
         });
 
     } catch (error) {

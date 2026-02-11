@@ -529,6 +529,23 @@ router.patch('/:id/status', async (req, res) => {
             }
         }
 
+        // EARN POINTS: 1 poin per Rp10.000
+        if (status === 'completed' && order && order.user_id) {
+            try {
+                const pointsEarned = Math.floor((order.total || 0) / 10000);
+                if (pointsEarned > 0) {
+                    await db.run(
+                        `INSERT INTO user_points (user_id, points, type, description) VALUES ($1, $2, 'earn', $3)`,
+                        [order.user_id, pointsEarned, `Point dari order #${order.order_number}`]
+                    );
+                    console.log(`[POINTS] User ${order.user_id} earned ${pointsEarned} points from order #${order.order_number} (total: Rp${order.total})`);
+                }
+            } catch (pointErr) {
+                console.error('[POINTS ERROR]', pointErr.message);
+                // Don't fail the order update if points fail
+            }
+        }
+
         res.json({ message: 'Status updated', order });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
