@@ -79,14 +79,22 @@ router.post('/register', async (req, res) => {
             });
         }
 
-        // 4. Insert voucher ke user_vouchers
+        // 4. Calculate Expired At
+        let expired_at = null;
+        if (voucher.validity_days) {
+            const date = new Date();
+            date.setDate(date.getDate() + voucher.validity_days);
+            expired_at = date.toISOString();
+        }
+
+        // 5. Insert voucher ke user_vouchers
         await db.query(
-            `INSERT INTO user_vouchers (user_id, voucher_id, device_id, is_used) 
-             VALUES ($1, $2, $3, $4)`,
-            [null, voucher.id, trimmedDeviceId, false]
+            `INSERT INTO user_vouchers (user_id, voucher_id, device_id, is_used, expired_at) 
+             VALUES ($1, $2, $3, $4, $5)`,
+            [null, voucher.id, trimmedDeviceId, false, expired_at]
         );
 
-        // 5. Kurangi quota voucher
+        // 6. Kurangi quota voucher
         if (voucher.quota !== null) {
             await db.query(
                 'UPDATE customer_vouchers SET quota = quota - 1 WHERE id = $1',

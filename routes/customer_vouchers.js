@@ -17,13 +17,18 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     const { title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date } = req.body;
 
+    // Enforce Single Active New User Voucher
+    if (category === 'new_user') {
+        await db.query(`UPDATE customer_vouchers SET is_active = FALSE WHERE category = 'new_user'`);
+    }
+
     try {
         const result = await db.query(
             `INSERT INTO customer_vouchers 
-       (title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       (title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-            [title, description, category, type, value, max_discount || null, min_purchase || 0, quota || null, validity_days || 0, start_date || null, end_date || null]
+            [title, description, category, type, value, max_discount || null, min_purchase || 0, quota || null, validity_days || 0, start_date || null, end_date || null, true] // Default active for new
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -35,6 +40,11 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const { title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date, is_active } = req.body;
+
+    // Enforce Single Active New User Voucher
+    if (category === 'new_user' && is_active) {
+        await db.query(`UPDATE customer_vouchers SET is_active = FALSE WHERE category = 'new_user' AND id != $1`, [id]);
+    }
 
     try {
         const result = await db.query(
