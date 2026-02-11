@@ -64,7 +64,7 @@ router.get('/', async (req, res) => {
 // 2. ADMIN MENU
 router.get('/admin/all', async (req, res) => {
     try {
-        const items = await db.all(`SELECT m.*, c.name as category_name FROM menu_items m LEFT JOIN categories c ON m.category_id = c.id ORDER BY m.created_at DESC`);
+        const items = await db.all(`SELECT m.*, c.name as category_name FROM menu_items m LEFT JOIN categories c ON m.category_id = c.id ORDER BY m.id DESC`);
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = req.get('host');
         const itemsWithUrls = await Promise.all(items.map(async item => {
