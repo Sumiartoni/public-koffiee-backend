@@ -15,7 +15,16 @@ router.get('/', async (req, res) => {
 
 // CREATE a new voucher
 router.post('/', async (req, res) => {
-    const { title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date } = req.body;
+    let { title, description, category, type, value, max_discount, min_purchase, quota, validity_days, start_date, end_date } = req.body;
+
+    // Safety Fallback for New User Manager if category is missing
+    if (!category && !title) { // Assuming title is sent
+        console.warn("Received empty body in create voucher:", req.body);
+    }
+    if (!category && title) {
+        // Log it
+        console.warn("Received Voucher POST without category. Body:", req.body);
+    }
 
     // Enforce Single Active New User Voucher
     if (category === 'new_user') {
