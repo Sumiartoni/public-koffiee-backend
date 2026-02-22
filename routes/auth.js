@@ -35,6 +35,12 @@ router.post('/mock-login', async (req, res) => {
 
             const newId = (result.rows && result.rows[0]) ? result.rows[0].id : null;
             user = await db.get('SELECT * FROM users WHERE id = $1', [newId]);
+        } else {
+            // Update name if provided and different (user may re-login with real name)
+            if (name && name.trim() && user.name !== userName) {
+                await db.run('UPDATE users SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [userName, user.id]);
+                user.name = userName;
+            }
         }
 
         const token = jwt.sign(
