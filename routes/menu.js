@@ -45,15 +45,29 @@ router.get('/', async (req, res) => {
         const host = req.get('host');
 
         const itemsWithUrls = await Promise.all(items.map(async item => {
-            const extras = await db.all(`
-                SELECT e.* FROM extras e
-                JOIN menu_item_extras mie ON e.id = mie.extra_id
-                WHERE mie.menu_item_id = $1 AND (e.is_active::text = 'true' OR e.is_active::text = '1' OR e.is_active::text = 't')
+            // Fetch extra categories linked to this menu item
+            const categories = await db.all(`
+                SELECT ec.* FROM extra_categories ec
+                JOIN menu_item_extra_categories miec ON ec.id = miec.extra_category_id
+                WHERE miec.menu_item_id = $1 AND (ec.is_active::text = 'true' OR ec.is_active::text = '1' OR ec.is_active::text = 't')
+                ORDER BY ec.sort_order, ec.name
             `, [item.id]);
+
+            // Fetch extras for each category
+            for (const cat of categories) {
+                cat.extras = await db.all(
+                    `SELECT * FROM extras WHERE category_id = $1 AND (is_active::text = 'true' OR is_active::text = '1' OR is_active::text = 't') ORDER BY name`,
+                    [cat.id]
+                );
+            }
+
+            // Flatten extras for backward compat (POS/mobile)
+            const extras = categories.flatMap(c => c.extras);
 
             return {
                 ...item,
                 extras,
+                extra_categories: categories,
                 image_url: item.image_url ? (item.image_url.startsWith('http') ? item.image_url : `${protocol}://${host}/uploads/${item.image_url}`) : null
             };
         }));
@@ -68,10 +82,20 @@ router.get('/admin/all', async (req, res) => {
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = req.get('host');
         const itemsWithUrls = await Promise.all(items.map(async item => {
-            const extras = await db.all(`SELECT e.* FROM extras e JOIN menu_item_extras mie ON e.id = mie.extra_id WHERE mie.menu_item_id = $1`, [item.id]);
+            const categories = await db.all(`
+                SELECT ec.* FROM extra_categories ec
+                JOIN menu_item_extra_categories miec ON ec.id = miec.extra_category_id
+                WHERE miec.menu_item_id = $1
+                ORDER BY ec.sort_order, ec.name
+            `, [item.id]);
+            for (const cat of categories) {
+                cat.extras = await db.all('SELECT * FROM extras WHERE category_id = $1 ORDER BY name', [cat.id]);
+            }
+            const extras = categories.flatMap(c => c.extras);
             return {
                 ...item,
                 extras,
+                extra_categories: categories,
                 image_url: item.image_url ? (item.image_url.startsWith('http') ? item.image_url : `${protocol}://${host}/uploads/${item.image_url}`) : null
             };
         }));
