@@ -28,6 +28,7 @@ import deviceRoutes from './routes/device.js';
 import rewardRoutes from './routes/rewards.js';
 import bannerRoutes from './routes/banners.js';
 import notificationRoutes from './routes/notifications.js';
+import loyaltyRoutes from './routes/loyalty.js';
 import { startAutoCancelScheduler } from './autoCancelOrders.js';
 
 dotenv.config();
@@ -158,6 +159,7 @@ app.use('/api/device', deviceRoutes); // Device registration & new user voucher
 app.use('/api/rewards', rewardRoutes); // Reward products, points, redeem
 app.use('/api/banners', bannerRoutes);
 app.use('/api/notifications', notificationRoutes); // App banners
+app.use('/api/loyalty', loyaltyRoutes); // Loyalty point settings & user points
 
 // QRIS image endpoint
 app.get('/api/qris/image', (req, res) => {

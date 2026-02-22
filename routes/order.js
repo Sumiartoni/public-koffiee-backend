@@ -589,16 +589,34 @@ router.patch('/:id/status', async (req, res) => {
             }
         }
 
-        // EARN POINTS: 1 poin per Rp10.000
+        // EARN POINTS: Dynamic from loyalty_settings
         if (status === 'completed' && order && order.user_id) {
             try {
-                const pointsEarned = Math.floor((order.total || 0) / 10000);
-                if (pointsEarned > 0) {
-                    await db.run(
-                        `INSERT INTO user_points (user_id, points, type, description) VALUES ($1, $2, 'earn', $3)`,
-                        [order.user_id, pointsEarned, `Point dari order #${order.order_number}`]
+                // Prevent double points for same order
+                const existingPoint = await db.get(
+                    'SELECT id FROM user_points WHERE order_id = $1 AND type = $2', [orderId, 'earn']
+                );
+                if (!existingPoint) {
+                    const loyaltySettings = await db.get(
+                        'SELECT * FROM loyalty_settings WHERE is_active = true ORDER BY id DESC LIMIT 1'
                     );
-                    console.log(`[POINTS] User ${order.user_id} earned ${pointsEarned} points from order #${order.order_number} (total: Rp${order.total})`);
+                    if (loyaltySettings && (order.total || 0) >= (loyaltySettings.min_purchase || 0)) {
+                        const pointsEarned = Math.floor((order.total || 0) * parseFloat(loyaltySettings.point_per_rupiah));
+                        if (pointsEarned > 0) {
+                            await db.run(
+                                `INSERT INTO user_points (user_id, points, type, description, order_id) VALUES ($1, $2, 'earn', $3, $4)`,
+                                [order.user_id, pointsEarned, `Point dari transaksi #${order.order_number}`, orderId]
+                            );
+                            // Update denormalized points on users table
+                            await db.run(
+                                'UPDATE users SET points = points + $1 WHERE id = $2',
+                                [pointsEarned, order.user_id]
+                            );
+                            console.log(`[POINTS] User ${order.user_id} earned ${pointsEarned} points from order #${order.order_number} (total: Rp${order.total}, rate: ${loyaltySettings.point_per_rupiah})`);
+                        }
+                    }
+                } else {
+                    console.log(`[POINTS] Skipped: Points already earned for order ${orderId}`);
                 }
             } catch (pointErr) {
                 console.error('[POINTS ERROR]', pointErr.message);
