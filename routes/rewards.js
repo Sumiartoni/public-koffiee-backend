@@ -240,6 +240,12 @@ router.post('/points/redeem', async (req, res) => {
             [user_id, reward.points_required, `Tukar reward: ${reward.title}`]
         );
 
+        // 5b. Update denormalized users.points
+        await db.query(
+            'UPDATE users SET points = points - $1 WHERE id = $2',
+            [reward.points_required, user_id]
+        );
+
         // 6. Give reward to user
         await db.query(
             `INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)`,
