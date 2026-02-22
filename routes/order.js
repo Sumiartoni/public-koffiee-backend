@@ -314,6 +314,11 @@ router.post('/', async (req, res) => {
 
         // Validate Items & Stock
         for (const item of items) {
+            // Detect redeem items
+            const isRedeem = item.is_redeem === true;
+            const redeemType = item.redeem_type || null; // 'point' or 'referral'
+            const rewardId = item.reward_id ? Number(item.reward_id) : null;
+
             // Use price from Flutter (already includes extras if selected)
             let price = Number(item.price) || 0;
             let subtotalFromClient = Number(item.subtotal) || 0;
@@ -321,18 +326,24 @@ router.post('/', async (req, res) => {
             let menuItemId = Number(item.menu_item_id);
             let menuItemName = item.name || item.menu_item_name || 'Item Hapus';
 
+            // Force price=0 for redeem items (security: don't trust client price)
+            if (isRedeem) {
+                price = 0;
+                subtotalFromClient = 0;
+            }
+
             // Try to lookup from DB for stock deduction and HPP
             const menuItem = await db.get('SELECT * FROM menu_items WHERE id = $1', [menuItemId]);
             if (menuItem) {
                 hpp = Number(menuItem.hpp);
                 menuItemName = menuItem.name;
 
-                // ONLY use DB price if client didn't send one (fallback)
-                if (!item.price || Number(item.price) === 0) {
+                // ONLY use DB price if client didn't send one (fallback) — skip for redeem
+                if (!isRedeem && (!item.price || Number(item.price) === 0)) {
                     price = Number(menuItem.price);
                 }
 
-                // Deduct Stock
+                // Deduct Stock (even for redeem items — product is still consumed)
                 try {
                     const recipes = await db.all('SELECT * FROM recipes WHERE menu_item_id = $1', [menuItem.id]);
                     for (const recipe of recipes) {
@@ -350,7 +361,7 @@ router.post('/', async (req, res) => {
 
             // Use subtotal from client if available (already calculated with extras in Flutter)
             // Otherwise calculate from price * qty
-            const itemSubtotal = subtotalFromClient || (price * qty);
+            const itemSubtotal = isRedeem ? 0 : (subtotalFromClient || (price * qty));
             const itemHpp = hpp * qty;
 
             subtotal += itemSubtotal;
@@ -364,8 +375,15 @@ router.post('/', async (req, res) => {
                 hpp: hpp,
                 subtotal: itemSubtotal,
                 notes: item.notes || '',
-                extras: item.extras || null
+                extras: item.extras || null,
+                is_redeem: isRedeem,
+                redeem_type: redeemType,
+                reward_id: rewardId
             });
+
+            if (isRedeem) {
+                console.log(`[REDEEM] Item "${menuItemName}" is a ${redeemType} redeem (reward_id: ${rewardId})`);
+            }
         }
 
         const tax = 0;
@@ -436,9 +454,9 @@ router.post('/', async (req, res) => {
         for (const item of validItems) {
             const extrasStr = (typeof item.extras === 'string') ? item.extras : JSON.stringify(item.extras || null);
             await db.run(`
-                INSERT INTO order_items (order_id, menu_item_id, menu_item_name, quantity, price, hpp, subtotal, notes, extras)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            `, [orderId, item.menu_item_id, item.name, item.quantity, item.price, item.hpp, item.subtotal, item.notes, extrasStr]);
+                INSERT INTO order_items (order_id, menu_item_id, menu_item_name, quantity, price, hpp, subtotal, notes, extras, is_redeem, redeem_type, reward_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [orderId, item.menu_item_id, item.name, item.quantity, item.price, item.hpp, item.subtotal, item.notes, extrasStr, item.is_redeem || false, item.redeem_type || null, item.reward_id || null]);
         }
 
         // Fetch Complete Order (for Socket & WA)
@@ -469,6 +487,48 @@ router.post('/', async (req, res) => {
         // Mark Voucher as Used
         if (user_voucher_id) {
             await db.run(`UPDATE user_vouchers SET is_used = TRUE, used_at = CURRENT_TIMESTAMP WHERE id = $1`, [user_voucher_id]);
+        }
+
+        // REDEEM: Deduct points/referral for redeemed items
+        const redeemItems = validItems.filter(i => i.is_redeem);
+        for (const redeemItem of redeemItems) {
+            if (redeemItem.redeem_type === 'point' && redeemItem.reward_id && user_id) {
+                try {
+                    // Get reward to know points_required
+                    const reward = await db.get('SELECT * FROM reward_products WHERE id = $1', [redeemItem.reward_id]);
+                    if (reward && reward.points_required) {
+                        // Deduct from user_points ledger
+                        await db.run(
+                            `INSERT INTO user_points (user_id, points, type, description, order_id) VALUES ($1, $2, 'redeem', $3, $4)`,
+                            [user_id, reward.points_required, `Tukar reward: ${reward.title}`, orderId]
+                        );
+                        // Update denormalized users.points
+                        await db.run('UPDATE users SET points = points - $1 WHERE id = $2', [reward.points_required, user_id]);
+                        // Give reward to user
+                        await db.run('INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)', [user_id, redeemItem.reward_id]);
+                        // Reduce quota
+                        if (reward.quota !== null) {
+                            await db.run('UPDATE reward_products SET quota = quota - 1 WHERE id = $1', [redeemItem.reward_id]);
+                        }
+                        console.log(`[REDEEM] User ${user_id} redeemed "${reward.title}" for ${reward.points_required} points via order #${orderNumber}`);
+                    }
+                } catch (redeemErr) {
+                    console.error('[REDEEM POINT ERROR]', redeemErr.message);
+                }
+            } else if (redeemItem.redeem_type === 'referral' && redeemItem.reward_id && user_id) {
+                try {
+                    const reward = await db.get('SELECT * FROM reward_products WHERE id = $1', [redeemItem.reward_id]);
+                    if (reward) {
+                        await db.run('INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)', [user_id, redeemItem.reward_id]);
+                        if (reward.quota !== null) {
+                            await db.run('UPDATE reward_products SET quota = quota - 1 WHERE id = $1', [redeemItem.reward_id]);
+                        }
+                        console.log(`[REDEEM] User ${user_id} redeemed referral reward "${reward.title}" via order #${orderNumber}`);
+                    }
+                } catch (redeemErr) {
+                    console.error('[REDEEM REFERRAL ERROR]', redeemErr.message);
+                }
+            }
         }
 
 
