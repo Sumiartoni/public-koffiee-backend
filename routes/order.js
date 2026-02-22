@@ -515,10 +515,41 @@ router.get('/', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET Pending Orders
+// GET Active Order by Phone (for customer app)
+router.get('/active/:phone', async (req, res) => {
+    try {
+        const phone = req.params.phone.replace(/\D/g, '');
+        if (!phone || phone.length < 10) {
+            return res.status(400).json({ error: 'Invalid phone number' });
+        }
+
+        // Find most recent active order (pending or processing)
+        const order = await db.get(`
+            SELECT * FROM orders 
+            WHERE customer_phone = $1 
+            AND status IN ('pending', 'processing') 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        `, [phone]);
+
+        if (!order) {
+            return res.json({ order: null });
+        }
+
+        // Fetch items
+        order.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(order.id)]);
+
+        res.json({ order });
+    } catch (err) {
+        console.error('[ACTIVE ORDER ERROR]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// GET Pending/Active Orders (pending + processing)
 router.get('/pending', async (req, res) => {
     try {
-        const orders = await db.all("SELECT * FROM orders WHERE status = 'pending' ORDER BY created_at DESC");
+        const orders = await db.all("SELECT * FROM orders WHERE status IN ('pending', 'processing') ORDER BY created_at DESC");
         for (let o of orders) {
             o.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(o.id)]);
         }
