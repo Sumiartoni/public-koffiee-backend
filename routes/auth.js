@@ -9,6 +9,53 @@ const JWT_SECRET = process.env.JWT_SECRET || 'rahasiaku123';
 // In-memory OTP store (username -> { code, expires })
 const otpStore = {};
 
+// Mock Login (Customer App - temporary until OTP)
+router.post('/mock-login', async (req, res) => {
+    const { phone, device_id } = req.body;
+
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+        return res.status(400).json({ error: 'Nomor HP tidak valid' });
+    }
+
+    const cleanPhone = phone.replace(/\D/g, '');
+
+    try {
+        // Check if customer exists by phone
+        let user = await db.get('SELECT * FROM users WHERE phone = $1', [cleanPhone]);
+
+        if (!user) {
+            // Auto-create customer account
+            const result = await db.run(`
+                INSERT INTO users (username, password, name, role, phone, is_verified, is_active)
+                VALUES ($1, $2, $3, 'customer', $4, 1, 1)
+                RETURNING id
+            `, [`cust_${cleanPhone}`, 'mock_no_password', `Guest ${cleanPhone.slice(-4)}`, cleanPhone]);
+
+            const newId = (result.rows && result.rows[0]) ? result.rows[0].id : null;
+            user = await db.get('SELECT * FROM users WHERE id = $1', [newId]);
+        }
+
+        const token = jwt.sign(
+            { id: user.id, phone: cleanPhone, role: 'customer', device_id },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        res.json({
+            token,
+            user: {
+                id: user.id,
+                name: user.name,
+                phone: cleanPhone,
+                points: 0
+            }
+        });
+    } catch (err) {
+        console.error('[MOCK LOGIN ERROR]', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // Login
 router.post('/login', async (req, res) => {
     const { username, password } = req.body;
