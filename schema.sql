@@ -181,3 +181,41 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- EXTRA CATEGORIES (user-defined groups like "Level Gula", "Topping", etc.)
+CREATE TABLE IF NOT EXISTS extra_categories (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  is_required BOOLEAN DEFAULT FALSE,
+  max_select INTEGER DEFAULT 1,
+  is_active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- EXTRAS (Varian Tambahan - belongs to a category)
+CREATE TABLE IF NOT EXISTS extras (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  price INTEGER DEFAULT 0,
+  category_id INTEGER REFERENCES extra_categories(id) ON DELETE SET NULL,
+  is_active INTEGER DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- MENU ITEM EXTRA CATEGORIES (Link categories to menu items)
+CREATE TABLE IF NOT EXISTS menu_item_extra_categories (
+  id SERIAL PRIMARY KEY,
+  menu_item_id INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  extra_category_id INTEGER NOT NULL REFERENCES extra_categories(id) ON DELETE CASCADE,
+  UNIQUE(menu_item_id, extra_category_id)
+);
+
+-- MENU ITEM EXTRAS (Legacy junction - kept for backward compat)
+CREATE TABLE IF NOT EXISTS menu_item_extras (
+  id SERIAL PRIMARY KEY,
+  menu_item_id INTEGER NOT NULL REFERENCES menu_items(id) ON DELETE CASCADE,
+  extra_id INTEGER NOT NULL REFERENCES extras(id) ON DELETE CASCADE,
+  UNIQUE(menu_item_id, extra_id)
+);
