@@ -620,11 +620,12 @@ router.get('/active/:phone', async (req, res) => {
             return res.status(400).json({ error: 'Invalid phone number' });
         }
 
-        // Find most recent active order (pending, processing, or unpaid QRIS)
+        // Find most recent active order (pending, processing, completed, or unpaid QRIS)
+        // 'picked_up' and 'cancelled' are terminal — card disappears from customer home
         const order = await db.get(`
             SELECT * FROM orders 
             WHERE customer_phone = $1 
-            AND status IN ('pending', 'processing', 'unpaid') 
+            AND status IN ('pending', 'processing', 'completed', 'unpaid') 
             ORDER BY created_at DESC 
             LIMIT 1
         `, [phone]);
@@ -643,10 +644,10 @@ router.get('/active/:phone', async (req, res) => {
     }
 });
 
-// GET Pending/Active Orders (pending + processing)
+// GET Pending/Active Orders (pending + processing + completed for web pickup)
 router.get('/pending', async (req, res) => {
     try {
-        const orders = await db.all("SELECT * FROM orders WHERE status IN ('pending', 'processing') ORDER BY created_at DESC");
+        const orders = await db.all("SELECT * FROM orders WHERE status IN ('pending', 'processing', 'completed') ORDER BY created_at DESC");
         for (let o of orders) {
             o.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(o.id)]);
         }
@@ -654,9 +655,9 @@ router.get('/pending', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PATCH Status (Confirm Order / Complete)
+// PATCH Status (Confirm Order / Complete / Picked Up)
 router.patch('/:id/status', async (req, res) => {
-    const { status } = req.body; // usually 'completed' or 'cancelled'
+    const { status } = req.body; // 'processing', 'completed', 'picked_up', or 'cancelled'
     const orderId = Number(req.params.id);
 
     try {
