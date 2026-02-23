@@ -620,11 +620,11 @@ router.get('/active/:phone', async (req, res) => {
             return res.status(400).json({ error: 'Invalid phone number' });
         }
 
-        // Find most recent active order (pending or processing)
+        // Find most recent active order (pending, processing, or unpaid QRIS)
         const order = await db.get(`
             SELECT * FROM orders 
             WHERE customer_phone = $1 
-            AND status IN ('pending', 'processing') 
+            AND status IN ('pending', 'processing', 'unpaid') 
             ORDER BY created_at DESC 
             LIMIT 1
         `, [phone]);
@@ -660,8 +660,13 @@ router.patch('/:id/status', async (req, res) => {
     const orderId = Number(req.params.id);
 
     try {
+        // Preserve existing payment_status (don't overwrite 'paid' from QRIS)
+        const existingOrder = await db.get('SELECT payment_status FROM orders WHERE id = $1', [orderId]);
+        const currentPaymentStatus = existingOrder ? existingOrder.payment_status : 'unpaid';
+        const newPaymentStatus = status === 'completed' ? 'paid' : (currentPaymentStatus === 'paid' ? 'paid' : 'unpaid');
+
         await db.run('UPDATE orders SET status = $1, payment_status = $2, completed_at = CURRENT_TIMESTAMP WHERE id = $3',
-            [status, status === 'completed' ? 'paid' : 'unpaid', orderId]);
+            [status, newPaymentStatus, orderId]);
 
         const order = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
 
