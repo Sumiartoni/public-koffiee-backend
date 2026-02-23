@@ -575,6 +575,43 @@ router.get('/', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET Single Order by ID (for payment status polling)
+router.get('/status/:id', async (req, res) => {
+    try {
+        const orderId = Number(req.params.id);
+        const order = await db.get('SELECT * FROM orders WHERE id = $1', [orderId]);
+        if (!order) return res.status(404).json({ error: 'Order not found' });
+        order.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [orderId]);
+        res.json({ order });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET Order History by Phone (for customer app)
+router.get('/history/:phone', async (req, res) => {
+    try {
+        const phone = req.params.phone.replace(/\D/g, '');
+        if (!phone || phone.length < 10) {
+            return res.status(400).json({ error: 'Invalid phone number' });
+        }
+
+        const orders = await db.all(`
+            SELECT * FROM orders 
+            WHERE customer_phone = $1 
+            ORDER BY created_at DESC 
+            LIMIT 50
+        `, [phone]);
+
+        for (let o of orders) {
+            o.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(o.id)]);
+        }
+
+        res.json({ orders });
+    } catch (err) {
+        console.error('[ORDER HISTORY ERROR]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // GET Active Order by Phone (for customer app)
 router.get('/active/:phone', async (req, res) => {
     try {
