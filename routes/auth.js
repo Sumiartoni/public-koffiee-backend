@@ -11,7 +11,7 @@ const otpStore = {};
 
 // Mock Login (Customer App - temporary until OTP)
 router.post('/mock-login', async (req, res) => {
-    const { phone, device_id, name, whatsapp } = req.body;
+    const { phone, device_id, name, whatsapp, referral_code } = req.body;
 
     if (!phone || phone.replace(/\D/g, '').length < 10) {
         return res.status(400).json({ error: 'Nomor HP tidak valid' });
@@ -24,19 +24,57 @@ router.post('/mock-login', async (req, res) => {
     try {
         // Check if customer exists by phone
         let user = await db.get('SELECT * FROM users WHERE phone = $1', [cleanPhone]);
+        let isNewUser = false;
 
         if (!user) {
-            // Auto-create customer account
+            isNewUser = true;
+            // Generate unique referral code for new user
+            const userRefCode = 'PK' + Math.random().toString(36).substring(2, 8).toUpperCase();
+
             const result = await db.run(`
-                INSERT INTO users (username, password, name, role, phone, is_verified, is_active)
-                VALUES ($1, $2, $3, 'customer', $4, 1, 1)
+                INSERT INTO users (username, password, name, role, phone, is_verified, is_active, referral_code, referred_by)
+                VALUES ($1, $2, $3, 'customer', $4, 1, 1, $5, $6)
                 RETURNING id
-            `, [`cust_${cleanPhone}`, 'mock_no_password', userName, cleanWhatsapp]);
+            `, [
+                `cust_${cleanPhone}`,
+                'mock_no_password',
+                userName,
+                cleanWhatsapp,
+                userRefCode,
+                referral_code || null
+            ]);
 
             const newId = (result.rows && result.rows[0]) ? result.rows[0].id : null;
             user = await db.get('SELECT * FROM users WHERE id = $1', [newId]);
+
+            // Process referral if code provided
+            if (referral_code && user) {
+                try {
+                    const referrer = await db.get(
+                        'SELECT id FROM users WHERE referral_code = $1', [referral_code]
+                    );
+                    if (referrer && referrer.id !== user.id) {
+                        // Check not already recorded
+                        const existing = await db.get(
+                            'SELECT id FROM referral_rewards WHERE referred_id = $1', [user.id]
+                        );
+                        if (!existing) {
+                            await db.run(
+                                'INSERT INTO referral_rewards (referrer_id, referred_id) VALUES ($1, $2)',
+                                [referrer.id, user.id]
+                            );
+                            // Auto-grant referral rewards
+                            const { checkReferralEligibility } = await import('./referrals.js');
+                            await checkReferralEligibility(referrer.id);
+                            console.log(`[AUTH] Referral processed: ${referral_code} -> user ${user.id}`);
+                        }
+                    }
+                } catch (refErr) {
+                    console.error('[AUTH] Referral processing error (non-fatal):', refErr.message);
+                }
+            }
         } else {
-            // Update name if provided and different (user may re-login with real name)
+            // Update name if provided and different
             if (name && name.trim() && user.name !== userName) {
                 await db.run('UPDATE users SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [userName, user.id]);
                 user.name = userName;
@@ -56,6 +94,7 @@ router.post('/mock-login', async (req, res) => {
                 name: user.name,
                 phone: cleanPhone,
                 whatsapp: user.phone,
+                referral_code: user.referral_code || null,
                 points: 0
             }
         });

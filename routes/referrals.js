@@ -3,17 +3,91 @@ import db from '../db.js';
 
 const router = express.Router();
 
-// GET referral stats
+// =============================================
+// CORE: checkReferralEligibility (idempotent)
+// =============================================
+async function checkReferralEligibility(userId) {
+    // 1. Count total referrals for this user
+    const totalResult = await db.query(
+        `SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1`,
+        [userId]
+    );
+    const totalReferrals = parseInt(totalResult.rows[0].total);
+
+    if (totalReferrals === 0) return { total_referrals: 0, rewards_granted: [] };
+
+    // 2. Get all active reward_products with referrals_required
+    const rewards = (await db.query(
+        `SELECT * FROM reward_products WHERE referrals_required IS NOT NULL AND is_active = TRUE`
+    )).rows;
+
+    const rewardsGranted = [];
+
+    for (const reward of rewards) {
+        // 3. How many times is the user eligible for this reward?
+        const eligibleClaims = Math.floor(totalReferrals / reward.referrals_required);
+
+        if (eligibleClaims <= 0) continue;
+
+        // 4. How many times has this reward already been given?
+        const givenResult = await db.query(
+            `SELECT COUNT(*) as given FROM user_rewards WHERE user_id = $1 AND reward_id = $2 AND source = 'referral'`,
+            [userId, reward.id]
+        );
+        const alreadyGiven = parseInt(givenResult.rows[0].given);
+
+        // 5. Grant missing rewards
+        const toGrant = eligibleClaims - alreadyGiven;
+        if (toGrant <= 0) continue;
+
+        // Check quota
+        let availableQuota = toGrant;
+        if (reward.quota !== null) {
+            availableQuota = Math.min(toGrant, reward.quota);
+            if (availableQuota <= 0) continue;
+        }
+
+        for (let i = 0; i < availableQuota; i++) {
+            await db.query(
+                `INSERT INTO user_rewards (user_id, reward_id, source) VALUES ($1, $2, 'referral')`,
+                [userId, reward.id]
+            );
+        }
+
+        // Deduct quota
+        if (reward.quota !== null) {
+            await db.query(
+                'UPDATE reward_products SET quota = quota - $1 WHERE id = $2',
+                [availableQuota, reward.id]
+            );
+        }
+
+        rewardsGranted.push({
+            reward_id: reward.id,
+            title: reward.title,
+            count: availableQuota
+        });
+
+        console.log(`[REFERRAL] Granted ${availableQuota}x "${reward.title}" to user ${userId} (total referrals: ${totalReferrals}, eligible: ${eligibleClaims}, already: ${alreadyGiven})`);
+    }
+
+    return { total_referrals: totalReferrals, rewards_granted: rewardsGranted };
+}
+
+// =============================================
+// ADMIN: Referral Stats
+// =============================================
+
+// GET referral stats (all users)
 router.get('/stats', async (req, res) => {
     try {
-        // List users with their referral count & rewards
         const query = `
             SELECT 
                 u.id, 
                 u.name, 
                 u.referral_code,
-                (SELECT COUNT(*) FROM users WHERE referred_by = u.referral_code) as total_referrals,
-                (SELECT COUNT(*) FROM referral_rewards WHERE referrer_id = u.id AND reward_given = TRUE) as rewards_given
+                (SELECT COUNT(*) FROM referral_rewards WHERE referrer_id = u.id) as total_referrals,
+                (SELECT COUNT(*) FROM user_rewards WHERE user_id = u.id AND source = 'referral') as rewards_given
             FROM users u
             WHERE u.referral_code IS NOT NULL
             ORDER BY total_referrals DESC
@@ -30,10 +104,11 @@ router.get('/:userId/details', async (req, res) => {
     const { userId } = req.params;
     try {
         const query = `
-            SELECT id, name, created_at, is_verified 
-            FROM users 
-            WHERE referred_by = (SELECT referral_code FROM users WHERE id = $1)
-            ORDER BY created_at DESC
+            SELECT u.id, u.name, u.created_at, u.is_verified 
+            FROM referral_rewards rr
+            JOIN users u ON u.id = rr.referred_id
+            WHERE rr.referrer_id = $1
+            ORDER BY rr.created_at DESC
         `;
         const result = await db.query(query, [userId]);
         res.json(result.rows);
@@ -42,122 +117,110 @@ router.get('/:userId/details', async (req, res) => {
     }
 });
 
-// POST /api/referrals/process
-// Dipanggil setelah order pertama user berhasil
-// Memberikan reward PRODUK (bukan voucher) berdasarkan milestone referral
+// =============================================
+// USER: Referral Info (for customer app)
+// =============================================
+
+// GET /api/referrals/user/:userId/info
+router.get('/user/:userId/info', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        // 1. Get user's referral code
+        const user = (await db.query(
+            'SELECT referral_code FROM users WHERE id = $1', [userId]
+        )).rows[0];
+
+        // 2. Count referrals from referral_rewards table
+        const refCount = (await db.query(
+            'SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1', [userId]
+        )).rows[0];
+        const totalReferrals = parseInt(refCount.total);
+
+        // 3. Get next reward milestone from reward_products
+        const nextReward = (await db.query(`
+            SELECT rp.*, 
+                   (SELECT COUNT(*) FROM user_rewards WHERE user_id = $1 AND reward_id = rp.id AND source = 'referral') as already_given
+            FROM reward_products rp 
+            WHERE rp.referrals_required IS NOT NULL 
+            AND rp.is_active = TRUE
+            ORDER BY rp.referrals_required ASC
+            LIMIT 1
+        `, [userId])).rows[0];
+
+        let nextMilestone = null;
+        if (nextReward) {
+            const alreadyGiven = parseInt(nextReward.already_given);
+            const nextTarget = (alreadyGiven + 1) * nextReward.referrals_required;
+            nextMilestone = {
+                reward_title: nextReward.title,
+                referrals_required: nextReward.referrals_required,
+                next_target: nextTarget,
+                progress: totalReferrals,
+                rewards_earned: alreadyGiven
+            };
+        }
+
+        res.json({
+            referral_code: user?.referral_code || '-',
+            total_referrals: totalReferrals,
+            next_milestone: nextMilestone
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST /api/referrals/process (kept for manual trigger / backward compat)
 router.post('/process', async (req, res) => {
     const { user_id } = req.body;
-
-    if (!user_id) {
-        return res.status(400).json({ error: 'user_id wajib diisi' });
-    }
+    if (!user_id) return res.status(400).json({ error: 'user_id wajib diisi' });
 
     try {
-        // 1. Ambil data user
-        const user = (await db.query(
-            'SELECT * FROM users WHERE id = $1',
-            [user_id]
-        )).rows[0];
+        const user = (await db.query('SELECT * FROM users WHERE id = $1', [user_id])).rows[0];
+        if (!user) return res.status(404).json({ error: 'User tidak ditemukan' });
+        if (!user.referred_by) return res.json({ success: false, message: 'User tidak memiliki referral' });
 
-        if (!user) {
-            return res.status(404).json({ error: 'User tidak ditemukan' });
-        }
-
-        // 2. Cek referred_by
-        if (!user.referred_by) {
-            return res.json({
-                success: false,
-                message: 'User tidak memiliki referral (referred_by kosong)'
-            });
-        }
-
-        // 3. Cari referrer berdasarkan referral_code
+        // Find referrer
         const referrer = (await db.query(
-            'SELECT * FROM users WHERE referral_code = $1',
-            [user.referred_by]
+            'SELECT * FROM users WHERE referral_code = $1', [user.referred_by]
+        )).rows[0];
+        if (!referrer) return res.json({ success: false, message: 'Referrer tidak ditemukan' });
+
+        // Check if already recorded
+        const existing = (await db.query(
+            'SELECT id FROM referral_rewards WHERE referred_id = $1', [user_id]
         )).rows[0];
 
-        if (!referrer) {
-            return res.json({
-                success: false,
-                message: 'Referrer tidak ditemukan'
-            });
+        if (existing) {
+            return res.json({ success: false, message: 'Referral sudah tercatat sebelumnya' });
         }
 
-        // 4. Cek apakah reward sudah pernah diberikan untuk pasangan ini
-        const existingReward = (await db.query(
-            'SELECT * FROM referral_rewards WHERE referrer_id = $1 AND referred_id = $2',
-            [referrer.id, user_id]
-        )).rows[0];
-
-        if (existingReward) {
-            return res.json({
-                success: false,
-                message: 'Reward referral sudah pernah diberikan'
-            });
+        // Validate not self-referral
+        if (referrer.id === user.id) {
+            return res.json({ success: false, message: 'Tidak bisa referral diri sendiri' });
         }
 
-        // 5. Log referral dulu
+        // Record referral
         await db.query(
-            `INSERT INTO referral_rewards (referrer_id, referred_id, reward_given) VALUES ($1, $2, $3)`,
-            [referrer.id, user_id, true]
+            `INSERT INTO referral_rewards (referrer_id, referred_id) VALUES ($1, $2)`,
+            [referrer.id, user_id]
         );
 
-        // 6. Hitung total referral milik referrer
-        const totalReferrals = (await db.query(
-            `SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1 AND reward_given = TRUE`,
-            [referrer.id]
-        )).rows[0].total;
+        // Check eligibility and auto-grant rewards
+        const result = await checkReferralEligibility(referrer.id);
 
-        // 7. Cek apakah ada reward produk untuk milestone ini
-        const reward = (await db.query(
-            `SELECT * FROM reward_products 
-             WHERE referral_required = $1 
-             AND is_active = TRUE 
-             AND (quota IS NULL OR quota > 0)
-             LIMIT 1`,
-            [parseInt(totalReferrals)]
-        )).rows[0];
-
-        let rewardGiven = null;
-
-        if (reward) {
-            // Berikan reward produk ke referrer
-            await db.query(
-                `INSERT INTO user_rewards (user_id, reward_id) VALUES ($1, $2)`,
-                [referrer.id, reward.id]
-            );
-
-            // Kurangi quota
-            if (reward.quota !== null) {
-                await db.query(
-                    'UPDATE reward_products SET quota = quota - 1 WHERE id = $1',
-                    [reward.id]
-                );
-            }
-
-            rewardGiven = {
-                reward_id: reward.id,
-                title: reward.title,
-                product_id: reward.product_id
-            };
-
-            console.log(`[REFERRAL] Milestone reward "${reward.title}" given to referrer ${referrer.name} (total referrals: ${totalReferrals})`);
-        }
-
-        console.log(`[REFERRAL] Processed: referrer=${referrer.name}(${referrer.id}), referred=${user.name}(${user_id}), total=${totalReferrals}`);
+        console.log(`[REFERRAL] Processed: referrer=${referrer.name}(${referrer.id}), referred=${user.name}(${user_id}), total=${result.total_referrals}`);
 
         return res.json({
             success: true,
             message: 'Referral berhasil diproses',
-            total_referrals: parseInt(totalReferrals),
-            reward: rewardGiven
+            ...result
         });
-
     } catch (error) {
         console.error('[REFERRAL PROCESS ERROR]', error.message);
         res.status(500).json({ error: error.message });
     }
 });
 
+export { checkReferralEligibility };
 export default router;
