@@ -647,7 +647,12 @@ router.get('/active/:phone', async (req, res) => {
 // GET Pending/Active Orders (pending + processing + completed for web pickup)
 router.get('/pending', async (req, res) => {
     try {
-        const orders = await db.all("SELECT * FROM orders WHERE status IN ('pending', 'processing', 'completed') ORDER BY created_at DESC");
+        const orders = await db.all(`
+            SELECT * FROM orders 
+            WHERE status IN ('pending', 'processing') 
+               OR (status = 'completed' AND LOWER(order_type) IN ('pickup', 'delivery', 'online', 'booking'))
+            ORDER BY created_at DESC
+        `);
         for (let o of orders) {
             o.items = await db.all('SELECT * FROM order_items WHERE order_id = $1', [Number(o.id)]);
         }
