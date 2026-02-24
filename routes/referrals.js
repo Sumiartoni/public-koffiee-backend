@@ -127,45 +127,65 @@ router.get('/user/:userId/info', async (req, res) => {
     try {
         // 1. Get user's referral code
         const user = (await db.query(
-            'SELECT referral_code FROM users WHERE id = $1', [userId]
+            'SELECT id, referral_code FROM users WHERE id = $1', [userId]
         )).rows[0];
+
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // Auto-generate referral_code if missing
+        let referralCode = user.referral_code;
+        if (!referralCode) {
+            referralCode = 'PK' + Math.random().toString(36).substring(2, 8).toUpperCase();
+            await db.query('UPDATE users SET referral_code = $1 WHERE id = $2', [referralCode, userId]);
+            console.log(`[REFERRAL] Auto-generated code ${referralCode} for user ${userId}`);
+        }
 
         // 2. Count referrals from referral_rewards table
-        const refCount = (await db.query(
-            'SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1', [userId]
-        )).rows[0];
-        const totalReferrals = parseInt(refCount.total);
+        let totalReferrals = 0;
+        try {
+            const refCount = (await db.query(
+                'SELECT COUNT(*) as total FROM referral_rewards WHERE referrer_id = $1', [userId]
+            )).rows[0];
+            totalReferrals = parseInt(refCount.total);
+        } catch (e) {
+            console.warn('[REFERRAL] referral_rewards table error:', e.message);
+        }
 
         // 3. Get next reward milestone from reward_products
-        const nextReward = (await db.query(`
-            SELECT rp.*, 
-                   (SELECT COUNT(*) FROM user_rewards WHERE user_id = $1 AND reward_id = rp.id AND source = 'referral') as already_given
-            FROM reward_products rp 
-            WHERE rp.referrals_required IS NOT NULL 
-            AND rp.is_active = TRUE
-            ORDER BY rp.referrals_required ASC
-            LIMIT 1
-        `, [userId])).rows[0];
-
         let nextMilestone = null;
-        if (nextReward) {
-            const alreadyGiven = parseInt(nextReward.already_given);
-            const nextTarget = (alreadyGiven + 1) * nextReward.referrals_required;
-            nextMilestone = {
-                reward_title: nextReward.title,
-                referrals_required: nextReward.referrals_required,
-                next_target: nextTarget,
-                progress: totalReferrals,
-                rewards_earned: alreadyGiven
-            };
+        try {
+            const nextReward = (await db.query(`
+                SELECT rp.id, rp.title, rp.referrals_required,
+                       (SELECT COUNT(*) FROM user_rewards WHERE user_id = $1 AND reward_id = rp.id AND source = 'referral') as already_given
+                FROM reward_products rp 
+                WHERE rp.referrals_required IS NOT NULL 
+                AND rp.is_active = TRUE
+                ORDER BY rp.referrals_required ASC
+                LIMIT 1
+            `, [userId])).rows[0];
+
+            if (nextReward) {
+                const alreadyGiven = parseInt(nextReward.already_given);
+                const nextTarget = (alreadyGiven + 1) * nextReward.referrals_required;
+                nextMilestone = {
+                    reward_title: nextReward.title,
+                    referrals_required: nextReward.referrals_required,
+                    next_target: nextTarget,
+                    progress: totalReferrals,
+                    rewards_earned: alreadyGiven
+                };
+            }
+        } catch (e) {
+            console.warn('[REFERRAL] milestone query error:', e.message);
         }
 
         res.json({
-            referral_code: user?.referral_code || '-',
+            referral_code: referralCode,
             total_referrals: totalReferrals,
             next_milestone: nextMilestone
         });
     } catch (error) {
+        console.error('[REFERRAL INFO ERROR]', error.message);
         res.status(500).json({ error: error.message });
     }
 });
