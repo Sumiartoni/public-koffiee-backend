@@ -453,8 +453,8 @@ router.post('/', async (req, res) => {
             INSERT INTO orders (
                 order_number, customer_name, customer_phone, customer_address, 
                 order_type, table_number, payment_method, payment_status, status, 
-                subtotal, tax, discount, total, total_hpp, notes
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                subtotal, tax, discount, total, total_hpp, notes, user_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             RETURNING id
         `;
 
@@ -473,7 +473,8 @@ router.post('/', async (req, res) => {
             Math.round(finalDiscount),
             Math.round(total),
             Math.round(totalHpp),
-            String(notes || '')
+            String(notes || ''),
+            user_id || null
         ]);
 
         const orderId = (result.rows && result.rows[0]) ? result.rows[0].id : null;
