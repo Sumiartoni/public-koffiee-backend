@@ -79,6 +79,12 @@ router.post('/mock-login', async (req, res) => {
                 await db.run('UPDATE users SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [userName, user.id]);
                 user.name = userName;
             }
+            // Backfill referral_code for existing users who don't have one
+            if (!user.referral_code) {
+                const userRefCode = 'PK' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                await db.run('UPDATE users SET referral_code = $1 WHERE id = $2', [userRefCode, user.id]);
+                user.referral_code = userRefCode;
+            }
         }
 
         const token = jwt.sign(
