@@ -280,25 +280,33 @@ router.post('/', async (req, res) => {
     }
 
     // ============================================
-    // VOUCHER VALIDATION
+    // VOUCHER VALIDATION & SERVER-SIDE DISCOUNT
     // ============================================
+    let voucherDiscount = 0;
+    let voucherData = null;
     if (user_voucher_id) {
-        const voucher = await db.get('SELECT * FROM user_vouchers WHERE id = $1', [user_voucher_id]);
+        const userVoucher = await db.get('SELECT * FROM user_vouchers WHERE id = $1', [user_voucher_id]);
 
-        if (!voucher) {
+        if (!userVoucher) {
             return res.status(400).json({ error: 'Voucher tidak ditemukan' });
         }
 
-        if (user_id && voucher.user_id && String(voucher.user_id) !== String(user_id)) {
+        if (user_id && userVoucher.user_id && String(userVoucher.user_id) !== String(user_id)) {
             return res.status(400).json({ error: 'Voucher tidak valid untuk user ini' });
         }
 
-        if (voucher.is_used) {
+        if (userVoucher.is_used) {
             return res.status(400).json({ error: 'Voucher sudah digunakan' });
         }
 
-        if (voucher.expired_at && new Date(voucher.expired_at) < new Date()) {
+        if (userVoucher.expired_at && new Date(userVoucher.expired_at) < new Date()) {
             return res.status(400).json({ error: 'Voucher sudah kadaluarsa' });
+        }
+
+        // Fetch parent voucher details for discount calculation
+        const cvoucher = await db.get('SELECT * FROM customer_vouchers WHERE id = $1', [userVoucher.voucher_id]);
+        if (cvoucher) {
+            voucherData = cvoucher;
         }
     }
 
@@ -387,7 +395,28 @@ router.post('/', async (req, res) => {
         }
 
         const tax = 0;
-        const total = subtotal - (Number(discount) || 0);
+
+        // Server-side voucher discount calculation
+        if (voucherData && subtotal > 0) {
+            const minPurchase = Number(voucherData.min_purchase) || 0;
+            if (subtotal >= minPurchase) {
+                if (voucherData.type === 'percent') {
+                    const rawDiscount = Math.floor(subtotal * Number(voucherData.value) / 100);
+                    const maxDisc = Number(voucherData.max_discount) || rawDiscount;
+                    voucherDiscount = Math.min(rawDiscount, maxDisc);
+                } else {
+                    // nominal
+                    voucherDiscount = Math.min(Number(voucherData.value) || 0, subtotal);
+                }
+                console.log(`[VOUCHER] Applied: type=${voucherData.type}, value=${voucherData.value}, discount=Rp${voucherDiscount}`);
+            } else {
+                console.log(`[VOUCHER] Min purchase not met: subtotal=${subtotal}, min=${minPurchase}`);
+            }
+        }
+
+        // Use server-calculated voucher discount (override client-sent discount)
+        const finalDiscount = voucherDiscount > 0 ? voucherDiscount : (Number(discount) || 0);
+        const total = subtotal - finalDiscount;
 
         // LOGIC STATUS:
         // Default: 'unpaid' (Safety default)
@@ -441,7 +470,7 @@ router.post('/', async (req, res) => {
             finalStatus,
             Math.round(subtotal),
             Math.round(tax),
-            Math.round(Number(discount) || 0),
+            Math.round(finalDiscount),
             Math.round(total),
             Math.round(totalHpp),
             String(notes || '')
@@ -484,9 +513,11 @@ router.post('/', async (req, res) => {
             }
         }
 
-        // Mark Voucher as Used
+        // Mark Voucher as Used (immediately for all payment types)
+        // Voucher is reserved once applied to an order
         if (user_voucher_id) {
             await db.run(`UPDATE user_vouchers SET is_used = TRUE, used_at = CURRENT_TIMESTAMP WHERE id = $1`, [user_voucher_id]);
+            console.log(`[VOUCHER] Marked used: user_voucher_id=${user_voucher_id}`);
         }
 
         // REDEEM: Deduct points/referral for redeemed items
@@ -698,7 +729,8 @@ router.patch('/:id/status', async (req, res) => {
         }
 
         // EARN POINTS: Dynamic from loyalty_settings
-        if (status === 'completed' && order && order.user_id) {
+        // Only earn points when order is completed AND paid
+        if (status === 'completed' && order && order.user_id && newPaymentStatus === 'paid') {
             try {
                 // Prevent double points for same order
                 const existingPoint = await db.get(
