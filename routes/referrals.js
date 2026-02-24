@@ -16,16 +16,16 @@ async function checkReferralEligibility(userId) {
 
     if (totalReferrals === 0) return { total_referrals: 0, rewards_granted: [] };
 
-    // 2. Get all active reward_products with referrals_required
+    // 2. Get all active reward_products with referral_required
     const rewards = (await db.query(
-        `SELECT * FROM reward_products WHERE referrals_required IS NOT NULL AND is_active = TRUE`
+        `SELECT * FROM reward_products WHERE referral_required IS NOT NULL AND is_active = TRUE`
     )).rows;
 
     const rewardsGranted = [];
 
     for (const reward of rewards) {
         // 3. How many times is the user eligible for this reward?
-        const eligibleClaims = Math.floor(totalReferrals / reward.referrals_required);
+        const eligibleClaims = Math.floor(totalReferrals / reward.referral_required);
 
         if (eligibleClaims <= 0) continue;
 
@@ -155,21 +155,21 @@ router.get('/user/:userId/info', async (req, res) => {
         let nextMilestone = null;
         try {
             const nextReward = (await db.query(`
-                SELECT rp.id, rp.title, rp.referrals_required,
+                SELECT rp.id, rp.title, rp.referral_required,
                        (SELECT COUNT(*) FROM user_rewards WHERE user_id = $1 AND reward_id = rp.id AND source = 'referral') as already_given
                 FROM reward_products rp 
-                WHERE rp.referrals_required IS NOT NULL 
+                WHERE rp.referral_required IS NOT NULL 
                 AND rp.is_active = TRUE
-                ORDER BY rp.referrals_required ASC
+                ORDER BY rp.referral_required ASC
                 LIMIT 1
             `, [userId])).rows[0];
 
             if (nextReward) {
                 const alreadyGiven = parseInt(nextReward.already_given);
-                const nextTarget = (alreadyGiven + 1) * nextReward.referrals_required;
+                const nextTarget = (alreadyGiven + 1) * nextReward.referral_required;
                 nextMilestone = {
                     reward_title: nextReward.title,
-                    referrals_required: nextReward.referrals_required,
+                    referral_required: nextReward.referral_required,
                     next_target: nextTarget,
                     progress: totalReferrals,
                     rewards_earned: alreadyGiven
