@@ -16,7 +16,11 @@ router.get('/', async (req, res) => {
     `;
         const params = [];
 
-        if (user_id) {
+        if (user_id && device_id) {
+            // Both provided: show vouchers from either source
+            query += ` AND (uv.user_id = $1 OR uv.device_id = $2)`;
+            params.push(user_id, device_id);
+        } else if (user_id) {
             query += ` AND uv.user_id = $1`;
             params.push(user_id);
         } else if (device_id) {
