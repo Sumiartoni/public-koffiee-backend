@@ -106,8 +106,8 @@ export async function verifyPayment(amountReceived) {
         // Fetch updated order for socket payload
         const updatedOrder = await db.get('SELECT * FROM orders WHERE id = $1', [order.id]);
 
-        // Kirim Notifikasi WA Lunas (Memberitahu customer pembayaran diterima & sedang disiapkan)
-        if (order.customer_phone) {
+        // Kirim Notifikasi WA Lunas (Memberitahu customer pembayaran diterima & sedang disiapkan) - Skip for App
+        if (order.customer_phone && updatedOrder.source !== 'app') {
             const msg = formatPaymentSuccess(updatedOrder);
             await sendWhatsApp(order.customer_phone, msg); // Pastikan formatPaymentSuccess disesuaikan jika perlu
         }

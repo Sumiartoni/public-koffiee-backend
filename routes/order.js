@@ -220,7 +220,9 @@ async function generateOrderNumber() {
 
 // POST: CREATE NEW ORDER
 router.post('/', async (req, res) => {
-    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone, user_voucher_id, user_id } = req.body;
+    const { customer_name, items, payment_method, order_type, table_number, notes, discount, address, customer_phone, user_voucher_id, user_id, source } = req.body;
+
+    const orderSource = source || 'web'; // Default to web for backward compatibility with frontend-public
 
     console.log(`\n--- NEW ORDER ATTEMPT ---`);
     console.log(`Cust: ${customer_name}, Type: ${order_type}, Items: ${items?.length}`);
@@ -453,8 +455,8 @@ router.post('/', async (req, res) => {
             INSERT INTO orders (
                 order_number, customer_name, customer_phone, customer_address, 
                 order_type, table_number, payment_method, payment_status, status, 
-                subtotal, tax, discount, total, total_hpp, notes, user_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                subtotal, tax, discount, total, total_hpp, notes, user_id, source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING id
         `;
 
@@ -474,7 +476,8 @@ router.post('/', async (req, res) => {
             Math.round(total),
             Math.round(totalHpp),
             String(notes || ''),
-            user_id || null
+            user_id || null,
+            orderSource
         ]);
 
         const orderId = (result.rows && result.rows[0]) ? result.rows[0].id : null;
@@ -564,8 +567,8 @@ router.post('/', async (req, res) => {
         }
 
 
-        // Send WhatsApp Notification (Send for ALL orders, including UNPAID QRIS)
-        if (customer_phone) {
+        // Send WhatsApp Notification (Only if NOT from App)
+        if (customer_phone && orderSource !== 'app') {
             const typeLower = (order_type || '').toLowerCase();
             let waMsg = '';
 
@@ -711,8 +714,8 @@ router.patch('/:id/status', async (req, res) => {
         const io = req.app.get('io');
         if (io) io.emit('order-updated', { id: orderId, status });
 
-        // NOTIFIKASI KEDUA (Setelah Bayar / Completed)
-        if (status === 'completed' && order) {
+        // NOTIFIKASI KEDUA (Setelah Bayar / Completed) - Skip for App
+        if (status === 'completed' && order && order.source !== 'app') {
             const type = (order.order_type || '').toLowerCase();
 
             // Cek tipe pesanan untuk pesan yang sesuai
