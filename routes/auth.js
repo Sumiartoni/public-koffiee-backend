@@ -260,15 +260,20 @@ router.post('/verify-otp', async (req, res) => {
     if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
     if (!cleanPhone.startsWith('62')) cleanPhone = '62' + cleanPhone;
 
+    const now = new Date().toISOString();
+    console.log(`[VERIFY-OTP] Checking: ${cleanPhone} | Code: ${otp_code} | Now: ${now}`);
+
     try {
         // 1. Validate OTP
         const otpRecord = await db.get(
             `SELECT * FROM otp_codes 
-             WHERE phone = $1 AND otp_code = $2 AND is_used = FALSE AND expired_at > CURRENT_TIMESTAMP
+             WHERE phone = $1 AND otp_code = $2 AND is_used = FALSE AND expired_at > $3
              ORDER BY created_at DESC LIMIT 1`,
-            [cleanPhone, otp_code]
+            [cleanPhone, otp_code, now]
         );
+
         if (!otpRecord) {
+            console.warn(`[VERIFY-OTP] Failed: No valid record found for ${cleanPhone} and ${otp_code}`);
             return res.status(400).json({ error: 'Kode OTP salah atau sudah kedaluarsa' });
         }
 
