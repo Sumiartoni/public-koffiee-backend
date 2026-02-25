@@ -438,6 +438,7 @@ router.get('/customers', async (req, res) => {
                 u.phone,
                 u.referral_code,
                 u.created_at,
+                u.role,
                 COALESCE(u.points, 0) as points,
                 COALESCE(o.order_count, 0) as order_count,
                 COALESCE(o.total_spent, 0) as total_spent,
@@ -456,8 +457,9 @@ router.get('/customers', async (req, res) => {
         console.log(`[BACKOFFICE] Fetched ${total} customers. Filter summary:`, users.map(u => ({ id: u.id, name: u.name, role: u.role })));
         const activeToday = users.filter(u => {
             if (!u.last_order_at) return false;
+            const lastOrderStr = u.last_order_at instanceof Date ? u.last_order_at.toISOString() : String(u.last_order_at);
             const today = new Date().toISOString().slice(0, 10);
-            return u.last_order_at.slice(0, 10) === today;
+            return lastOrderStr.slice(0, 10) === today;
         }).length;
         res.json({ users, total, activeToday });
     } catch (err) {
