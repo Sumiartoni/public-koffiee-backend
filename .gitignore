@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.local
 .env.production
+config/firebase-service-account.json
 
 # Database files (SQLite local)
 *.db
