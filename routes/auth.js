@@ -236,4 +236,41 @@ router.get('/', async (req, res) => {
     res.json({ users });
 });
 
+// GET Customer App Users (role = customer) with stats
+router.get('/customers', async (req, res) => {
+    try {
+        const users = await db.all(`
+            SELECT 
+                u.id,
+                u.name,
+                u.phone,
+                u.referral_code,
+                u.created_at,
+                COALESCE(u.points, 0) as points,
+                COALESCE(o.order_count, 0) as order_count,
+                COALESCE(o.total_spent, 0) as total_spent,
+                o.last_order_at
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) as order_count, SUM(total) as total_spent, MAX(created_at) as last_order_at
+                FROM orders
+                WHERE status IN ('completed', 'picked_up')
+                GROUP BY user_id
+            ) o ON u.id = o.user_id
+            WHERE u.role = 'customer'
+            ORDER BY u.created_at DESC
+        `);
+        const total = users.length;
+        const activeToday = users.filter(u => {
+            if (!u.last_order_at) return false;
+            const today = new Date().toISOString().slice(0, 10);
+            return u.last_order_at.slice(0, 10) === today;
+        }).length;
+        res.json({ users, total, activeToday });
+    } catch (err) {
+        console.error('[CUSTOMERS ERROR]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 export default router;
