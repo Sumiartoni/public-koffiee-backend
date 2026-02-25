@@ -810,7 +810,7 @@ router.get('/stats/today', async (req, res) => {
                 COALESCE(SUM(total), 0) as total_revenue,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [todayStr, timezone]);
 
@@ -818,7 +818,7 @@ router.get('/stats/today', async (req, res) => {
         const paymentStats = await db.all(`
             SELECT payment_method, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY payment_method
         `, [todayStr, timezone]);
@@ -827,7 +827,7 @@ router.get('/stats/today', async (req, res) => {
         const typeStats = await db.all(`
             SELECT order_type, COUNT(id) as count, COALESCE(SUM(total), 0) as total_amount
             FROM orders 
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY order_type
         `, [todayStr, timezone]);
@@ -840,7 +840,7 @@ router.get('/stats/today', async (req, res) => {
                 SUM(oi.subtotal) as total_revenue
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
-            WHERE o.status = 'completed' 
+            WHERE o.status IN ('completed', 'picked_up') 
             AND (o.created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_name
             ORDER BY total_qty DESC

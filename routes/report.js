@@ -27,7 +27,7 @@ router.get('/dashboard', async (req, res) => {
                 COALESCE(SUM(total), 0) as total_revenue,
                 COALESCE(SUM(total_hpp), 0) as total_cogs 
             FROM orders 
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [todayStr, 'Asia/Jakarta']);
 
@@ -35,7 +35,7 @@ router.get('/dashboard', async (req, res) => {
     const salesYesterday = await db.get(`
             SELECT COALESCE(SUM(total), 0) as total_revenue
             FROM orders 
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $2)::date = $1::date
         `, [yesterdayStr, 'Asia/Jakarta']);
 
@@ -64,7 +64,7 @@ router.get('/dashboard', async (req, res) => {
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             LEFT JOIN menu_items mi ON oi.menu_item_id = mi.id
-            WHERE o.status = 'completed' 
+            WHERE o.status IN ('completed', 'picked_up') 
             AND (o.created_at AT TIME ZONE $2)::date = $1::date
             GROUP BY oi.menu_item_id, oi.menu_item_name, mi.emoji, mi.price, mi.hpp
             ORDER BY total_sold DESC LIMIT 5
@@ -76,7 +76,7 @@ router.get('/dashboard', async (req, res) => {
       SUM(total) as revenue,
       SUM(total_hpp) as hpp
             FROM orders
-            WHERE status = 'completed' 
+            WHERE status IN ('completed', 'picked_up') 
             AND (created_at AT TIME ZONE $1)::date >= (CURRENT_TIMESTAMP AT TIME ZONE $1)::date - INTERVAL '6 days'
             GROUP BY 1
             ORDER BY 1 ASC
@@ -124,7 +124,7 @@ COUNT(*) as total_orders,
   COALESCE(SUM(total_hpp), 0) as total_cogs
             FROM orders
             WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
-            AND status = 'completed'
+            AND status IN ('completed', 'picked_up')
   `, [s, e, 'Asia/Jakarta']);
 
     // Handle case where summaryRaw is null
@@ -137,7 +137,7 @@ COUNT(*) as total_orders,
             SELECT payment_method, COUNT(*) as count, SUM(total) as revenue
             FROM orders
             WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
-            AND status = 'completed'
+            AND status IN ('completed', 'picked_up')
             GROUP BY payment_method
   `, [s, e, 'Asia/Jakarta']);
 
@@ -146,7 +146,7 @@ COUNT(*) as total_orders,
             SELECT order_type, COUNT(*) as count, SUM(total) as revenue
             FROM orders
             WHERE (created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
-            AND status = 'completed'
+            AND status IN ('completed', 'picked_up')
             GROUP BY order_type
   `, [s, e, 'Asia/Jakarta']);
 
@@ -156,7 +156,7 @@ COUNT(*) as total_orders,
             FROM orders
             LEFT JOIN users ON orders.user_id = users.id
             WHERE (orders.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date 
-            AND orders.status = 'completed'
+            AND orders.status IN ('completed', 'picked_up')
             GROUP BY COALESCE(users.name, 'Staff')
   `, [s, e, 'Asia/Jakarta']);
 
@@ -169,7 +169,7 @@ COUNT(*) as total_orders,
             JOIN menu_items mi ON oi.menu_item_id = mi.id
             JOIN categories c ON mi.category_id = c.id
             WHERE (o.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
-            AND o.status = 'completed'
+            AND o.status IN ('completed', 'picked_up')
             GROUP BY c.id, c.name
   `, [s, e, 'Asia/Jakarta']);
 
@@ -179,7 +179,7 @@ COUNT(*) as total_orders,
             FROM order_items oi
             JOIN orders o ON oi.order_id = o.id
             WHERE (o.created_at AT TIME ZONE $3)::date BETWEEN $1::date AND $2:: date
-            AND o.status = 'completed'
+            AND o.status IN ('completed', 'picked_up')
             GROUP BY menu_item_name
             ORDER BY revenue DESC
   `, [s, e, 'Asia/Jakarta']);
@@ -250,7 +250,7 @@ to_char(created_at AT TIME ZONE $4, $1) as label,
   SUM(total) as revenue
             FROM orders
             WHERE (created_at AT TIME ZONE $4)::date BETWEEN $2::date AND $3:: date 
-            AND status = 'completed'
+            AND status IN ('completed', 'picked_up')
             GROUP BY 1
             ORDER BY 1 ASC
   `, [format, s, (end || s), 'Asia/Jakarta']);
@@ -265,7 +265,7 @@ router.get('/customers', async (req, res) => {
     const data = await db.all(`
             SELECT customer_name, COUNT(*) as visit_count, SUM(total) as total_spent, MAX(created_at) as last_visit
             FROM orders
-            WHERE status = 'completed' AND customer_name IS NOT NULL AND customer_name != 'Walk-in Customer'
+            WHERE status IN ('completed', 'picked_up') AND customer_name IS NOT NULL AND customer_name != 'Walk-in Customer'
             GROUP BY customer_name
             ORDER BY total_spent DESC
   `);
