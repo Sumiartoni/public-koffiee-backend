@@ -314,6 +314,13 @@ router.post('/verify-otp', async (req, res) => {
                 }
             }
         } else {
+            // Force role to customer if they are logging in via this flow (security hardening)
+            if (user.role !== 'customer') {
+                await db.run('UPDATE users SET role = \'customer\' WHERE id = $1', [user.id]);
+                user.role = 'customer';
+                console.log(`[VERIFY-OTP] Updated role to customer for user ${user.id}`);
+            }
+
             // Update name if provided
             if (name && name.trim() && user.name !== userName) {
                 await db.run('UPDATE users SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [userName, user.id]);
@@ -446,6 +453,7 @@ router.get('/customers', async (req, res) => {
             ORDER BY u.created_at DESC
         `);
         const total = users.length;
+        console.log(`[BACKOFFICE] Fetched ${total} customers. Filter summary:`, users.map(u => ({ id: u.id, name: u.name, role: u.role })));
         const activeToday = users.filter(u => {
             if (!u.last_order_at) return false;
             const today = new Date().toISOString().slice(0, 10);

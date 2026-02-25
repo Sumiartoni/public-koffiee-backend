@@ -38,6 +38,8 @@ router.get('/', async (req, res) => {
                 }
             }
         }
+        console.log(`[REWARDS] Fetched ${rewards.length} rewards from DB.`);
+        rewards.forEach(r => console.log(` - Reward: ${r.title} | Active: ${r.is_active} | Products: ${r.products?.length || 0}`));
 
         res.json(rewards);
     } catch (error) {
