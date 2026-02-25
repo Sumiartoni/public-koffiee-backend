@@ -468,4 +468,28 @@ router.get('/customers', async (req, res) => {
     }
 });
 
+// POST: Update FCM Token for Push Notifications
+router.post('/update-fcm-token', async (req, res) => {
+    const { user_id, token, device_id } = req.body;
+
+    if (!user_id || !token) {
+        return res.status(400).json({ error: 'User ID and Token are required' });
+    }
+
+    try {
+        // Upsert token
+        await db.run(`
+            INSERT INTO fcm_tokens (user_id, token, device_id, last_updated)
+            VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, device_id) 
+            DO UPDATE SET token = EXCLUDED.token, last_updated = CURRENT_TIMESTAMP
+        `, [user_id, token, device_id || 'unknown']);
+
+        res.json({ success: true, message: 'FCM token updated' });
+    } catch (error) {
+        console.error('[FCM TOKEN ERROR]', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;

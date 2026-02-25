@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { broadcastPush } from '../services/firebase.js';
 
 const router = express.Router();
 
@@ -51,6 +52,12 @@ router.post('/', async (req, res) => {
                 VALUES ${values}
             `);
         }
+
+        // PUSH NOTIFICATION: Broadcast to all tokens
+        broadcastPush(title, message, {
+            notification_id: notification.id.toString(),
+            type: 'announcement'
+        });
 
         res.status(201).json({ message: 'Notifikasi berhasil dikirim', notification, recipient_count: users.rows.length });
 

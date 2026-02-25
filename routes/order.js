@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { sendWhatsApp, formatNewOrder, formatOrderReady, formatWalkInReceipt, formatPaymentSuccess } from '../services/whatsapp.js';
+import { sendPush } from '../services/firebase.js';
 import { processQrisPayment } from '../services/payment/index.js';
 
 const router = express.Router();
@@ -765,6 +766,34 @@ router.patch('/:id/status', async (req, res) => {
             } catch (pointErr) {
                 console.error('[POINTS ERROR]', pointErr.message);
                 // Don't fail the order update if points fail
+            }
+        }
+
+        // PUSH NOTIFICATION (Level 1)
+        if (order && order.user_id) {
+            let notifTitle = '';
+            let notifBody = '';
+
+            if (status === 'processing') {
+                notifTitle = 'Pesanan Diproses ☕';
+                notifBody = `Kopi Anda sedang disiapkan oleh barista. Mohon tunggu sebentar ya!`;
+            } else if (status === 'completed') {
+                const type = (order.order_type || '').toLowerCase();
+                notifTitle = 'Pesanan Anda Siap! 🎉';
+                notifBody = type.includes('delivery')
+                    ? `Pesanan Anda sedang dalam perjalanan ke alamat tujuan.`
+                    : `Pesanan Anda sudah siap diambil di counter. Silakan tunjukkan nomor pesanan: ${order.order_number}`;
+            } else if (status === 'cancelled') {
+                notifTitle = 'Pesanan Dibatalkan ❌';
+                notifBody = `Mohon maaf, pesanan #${order.order_number} Anda telah dibatalkan. Silakan hubungi kasir untuk informasi lebih lanjut.`;
+            }
+
+            if (notifTitle) {
+                sendPush(order.user_id, notifTitle, notifBody, {
+                    order_id: order.id.toString(),
+                    order_number: order.order_number,
+                    type: 'order_status'
+                });
             }
         }
 
