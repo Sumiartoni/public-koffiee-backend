@@ -191,17 +191,196 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// Send OTP
-router.post('/send-otp', async (req, res) => {
+// =============================================
+// CUSTOMER OTP LOGIN (WhatsApp via Fonnte)
+// =============================================
+
+// POST /api/auth/request-otp
+router.post('/request-otp', async (req, res) => {
+    const { phone, device_id } = req.body;
+    if (!phone || phone.replace(/\D/g, '').length < 10) {
+        return res.status(400).json({ error: 'Nomor HP tidak valid' });
+    }
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    let cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
+    if (!cleanPhone.startsWith('62')) cleanPhone = '62' + cleanPhone;
+
+    try {
+        // Rate limit: max 3 OTP per number per 5 minutes
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const countByPhone = await db.get(
+            `SELECT COUNT(*) as cnt FROM otp_codes WHERE phone = $1 AND created_at > $2`,
+            [cleanPhone, fiveMinAgo]
+        );
+        if (parseInt(countByPhone.cnt) >= 3) {
+            return res.status(429).json({ error: 'Terlalu banyak permintaan OTP. Tunggu 5 menit.' });
+        }
+
+        // Rate limit: max 5 OTP per device per 10 minutes
+        if (device_id) {
+            const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const countByDevice = await db.get(
+                `SELECT COUNT(*) as cnt FROM otp_codes WHERE device_id = $1 AND created_at > $2`,
+                [device_id, tenMinAgo]
+            );
+            if (parseInt(countByDevice.cnt) >= 5) {
+                return res.status(429).json({ error: 'Terlalu banyak permintaan OTP dari perangkat ini.' });
+            }
+        }
+
+        const { generateOtp, sendWhatsApp } = await import('../services/fonnte.js');
+        const otpCode = generateOtp();
+        const expiredAt = new Date(Date.now() + 5 * 60 * 1000); // 5 menit
+
+        await db.run(
+            `INSERT INTO otp_codes (phone, otp_code, expired_at, device_id, request_ip) VALUES ($1, $2, $3, $4, $5)`,
+            [cleanPhone, otpCode, expiredAt.toISOString(), device_id || null, ip]
+        );
+
+        const message = `🔐 *Public Koffiee*\n\nKode OTP Anda: *${otpCode}*\n\nBerlaku 5 menit. Jangan bagikan ke siapapun.`;
+        await sendWhatsApp(cleanPhone, message);
+
+        console.log(`[OTP] Sent to ${cleanPhone} (device: ${device_id})`);
+        res.json({ success: true, message: 'OTP dikirim ke WhatsApp Anda' });
+    } catch (err) {
+        console.error('[REQUEST OTP ERROR]', err.message);
+        res.status(500).json({ error: 'Gagal mengirim OTP: ' + err.message });
+    }
+});
+
+// POST /api/auth/verify-otp (Customer Login)
+router.post('/verify-otp', async (req, res) => {
+    const { phone, otp_code, device_id, name, referral_code } = req.body;
+    if (!phone || !otp_code) {
+        return res.status(400).json({ error: 'phone dan otp_code wajib diisi' });
+    }
+
+    let cleanPhone = phone.replace(/\D/g, '');
+    if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
+    if (!cleanPhone.startsWith('62')) cleanPhone = '62' + cleanPhone;
+
+    try {
+        // 1. Validate OTP
+        const otpRecord = await db.get(
+            `SELECT * FROM otp_codes 
+             WHERE phone = $1 AND otp_code = $2 AND is_used = FALSE AND expired_at > CURRENT_TIMESTAMP
+             ORDER BY created_at DESC LIMIT 1`,
+            [cleanPhone, otp_code]
+        );
+        if (!otpRecord) {
+            return res.status(400).json({ error: 'Kode OTP salah atau sudah kedaluarsa' });
+        }
+
+        // 2. Mark OTP used
+        await db.run('UPDATE otp_codes SET is_used = TRUE WHERE id = $1', [otpRecord.id]);
+
+        // 3. Upsert user
+        const userName = name && name.trim() ? name.trim() : `Customer ${cleanPhone.slice(-4)}`;
+        let user = await db.get('SELECT * FROM users WHERE phone = $1', [cleanPhone]);
+        let isNewUser = false;
+
+        if (!user) {
+            isNewUser = true;
+            const userRefCode = 'PK' + Math.random().toString(36).substring(2, 8).toUpperCase();
+            const result = await db.run(`
+                INSERT INTO users (username, password, name, role, phone, is_verified, is_active, referral_code, referred_by)
+                VALUES ($1, $2, $3, 'customer', $4, 1, 1, $5, $6)
+                RETURNING id
+            `, [`cust_${cleanPhone}`, 'otp_no_password', userName, cleanPhone, userRefCode, referral_code || null]);
+
+            const newId = result.rows?.[0]?.id;
+            user = await db.get('SELECT * FROM users WHERE id = $1', [newId]);
+
+            // Process referral
+            if (referral_code && user) {
+                try {
+                    const referrer = await db.get('SELECT id FROM users WHERE referral_code = $1', [referral_code]);
+                    if (referrer && referrer.id !== user.id) {
+                        const existing = await db.get('SELECT id FROM referral_rewards WHERE referred_id = $1', [user.id]);
+                        if (!existing) {
+                            await db.run('INSERT INTO referral_rewards (referrer_id, referred_id) VALUES ($1, $2)', [referrer.id, user.id]);
+                            const { checkReferralEligibility } = await import('./referrals.js');
+                            await checkReferralEligibility(referrer.id);
+                        }
+                    }
+                } catch (refErr) {
+                    console.error('[VERIFY-OTP] Referral error (non-fatal):', refErr.message);
+                }
+            }
+        } else {
+            // Update name if provided
+            if (name && name.trim() && user.name !== userName) {
+                await db.run('UPDATE users SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [userName, user.id]);
+                user.name = userName;
+            }
+            if (!user.referral_code) {
+                const userRefCode = 'PK' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                await db.run('UPDATE users SET referral_code = $1 WHERE id = $2', [userRefCode, user.id]);
+                user.referral_code = userRefCode;
+            }
+        }
+
+        // 4. Soft device binding
+        if (device_id) {
+            const existingDevice = await db.get('SELECT * FROM user_devices WHERE device_id = $1', [device_id]).catch(() => null);
+            if (!existingDevice) {
+                await db.run(
+                    'INSERT INTO user_devices (device_id, user_id) VALUES ($1, $2) ON CONFLICT (device_id) DO NOTHING',
+                    [device_id, user.id]
+                ).catch(() => null);
+            } else {
+                await db.run(
+                    'UPDATE user_devices SET user_id = $1, last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE device_id = $2',
+                    [user.id, device_id]
+                ).catch(() => null);
+            }
+        }
+
+        // 5. Generate JWT
+        const token = jwt.sign(
+            { id: user.id, phone: cleanPhone, role: 'customer', device_id: device_id || 'unknown' },
+            JWT_SECRET,
+            { expiresIn: '30d' }
+        );
+
+        // 6. Insert session
+        const sessionExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        await db.run(
+            'INSERT INTO user_sessions (user_id, device_id, token, expired_at) VALUES ($1, $2, $3, $4)',
+            [user.id, device_id || null, token, sessionExpiry.toISOString()]
+        ).catch(() => null);
+
+        console.log(`[VERIFY-OTP] Login ${isNewUser ? 'NEW' : 'existing'} user: ${user.name} (${cleanPhone})`);
+
+        res.json({
+            token,
+            is_new_user: isNewUser,
+            user: {
+                id: user.id,
+                name: user.name,
+                phone: cleanPhone,
+                referral_code: user.referral_code || null,
+                points: user.points || 0,
+            }
+        });
+    } catch (err) {
+        console.error('[VERIFY OTP ERROR]', err);
+        res.status(500).json({ error: 'Server error: ' + err.message });
+    }
+});
+
+// Send OTP (legacy Admin - for backoffice password reset)
+router.post('/send-admin-otp', async (req, res) => {
     const { username } = req.body;
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore[username] = { code, expires: Date.now() + 300000 };
-    console.log(`[🔐 KODE OTP] ${username} -> ${code}`);
-    res.json({ message: 'OTP terkirim ke email', otp: code });
+    console.log(`[🔐 ADMIN OTP] ${username} -> ${code}`);
+    res.json({ message: 'OTP terkirim', otp: code });
 });
 
-// Verify OTP
-router.post('/verify-otp', async (req, res) => {
+// Verify OTP (legacy Admin)
+router.post('/verify-admin-otp', async (req, res) => {
     const { username, otp } = req.body;
     const record = otpStore[username];
     if (!record || record.code !== otp || Date.now() > record.expires) {
@@ -215,6 +394,7 @@ router.post('/verify-otp', async (req, res) => {
         res.status(500).json({ error: 'DB Error' });
     }
 });
+
 
 // Profile Me
 router.get('/me', async (req, res) => {
